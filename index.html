@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="es">
 
@@ -358,6 +359,12 @@
             font-size: 13px;
         }
 
+        .field input:disabled {
+            background: #EFEDE5;
+            color: var(--ink-soft);
+            cursor: not-allowed;
+        }
+
         .hint {
             font-size: 11.5px;
             color: var(--ink-soft);
@@ -412,6 +419,86 @@
 
         .calc-section-title:first-child {
             margin-top: 0;
+        }
+
+        /* ---------- Escala salarial general ---------- */
+        .escala-resumen {
+            display: flex;
+            gap: 8px;
+            overflow-x: auto;
+            padding: 4px 2px 10px;
+            margin-top: 4px;
+            scrollbar-width: thin;
+        }
+
+        .escala-chip {
+            flex: 0 0 auto;
+            display: flex;
+            flex-direction: column;
+            gap: 3px;
+            min-width: 132px;
+            text-align: left;
+            background: #FCFBF8;
+            border: 1px solid var(--line-strong);
+            border-radius: 4px;
+            padding: 7px 10px;
+            cursor: pointer;
+            font-family: 'Inter', sans-serif;
+        }
+
+        .escala-chip:hover {
+            border-color: var(--teal);
+        }
+
+        .escala-chip .chip-cat {
+            font-size: 10.5px;
+            font-weight: 600;
+            color: var(--ink-soft);
+            white-space: nowrap;
+        }
+
+        .escala-chip .chip-val {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 13px;
+            font-weight: 700;
+            color: var(--ink);
+        }
+
+        .escala-chip.filled .chip-val {
+            color: var(--teal-dark);
+        }
+
+        .escala-chip.active {
+            border-color: var(--navy);
+            box-shadow: inset 0 0 0 1px var(--navy);
+        }
+
+        .escala-chip.active .chip-cat {
+            color: var(--navy);
+        }
+
+        .sidebar-scale-btn {
+            width: 100%;
+            text-align: left;
+            background: transparent;
+            border: 1px dashed var(--line-strong);
+            border-radius: 3px;
+            padding: 9px 12px;
+            font-size: 12.5px;
+            font-weight: 600;
+            color: var(--navy);
+            cursor: pointer;
+            margin-bottom: 16px;
+        }
+
+        .sidebar-scale-btn:hover {
+            background: #E4DFCF;
+        }
+
+        .sidebar-scale-btn.active {
+            background: var(--navy);
+            color: #EDEBE3;
+            border-color: var(--navy);
         }
 
         /* ---------- Recibo preview (facsímil) ---------- */
@@ -528,6 +615,14 @@
 
         .recibo table td.num {
             text-align: right;
+        }
+
+        .recibo table tfoot .totales-row td {
+            border-top: 2px solid #111;
+            border-bottom: none;
+            font-weight: 800;
+            font-size: 11.5px;
+            padding-top: 5px;
         }
 
         .recibo .section-h {
@@ -708,6 +803,32 @@
             "Cajero",
         ];
 
+        // Jornadas soportadas y su fracción respecto de la jornada completa
+        const JORNADA_FRACCION = {
+            COMPLETA: 1,
+            TRES_CUARTOS: 0.75,
+            MEDIA: 0.5,
+        };
+        const JORNADA_LABEL = {
+            COMPLETA: "Jornada completa",
+            TRES_CUARTOS: "Tres cuartos de jornada",
+            MEDIA: "Media jornada",
+        };
+
+        function fraccionJornada(jornada) {
+            return JORNADA_FRACCION[jornada] !== undefined ? JORNADA_FRACCION[jornada] : 1;
+        }
+
+        function defaultEscalaGeneral() {
+            const basicos = {};
+            CATEGORIAS.forEach(c => { basicos[c] = ""; });
+            return {
+                basicos,
+                noRemunerativo: "",
+                noRemunerativoConcepto: "Asignación no remunerativa (paritaria)",
+            };
+        }
+
         // Número a letras (pesos argentinos)
         const UNIDADES = ["", "uno", "dos", "tres", "cuatro", "cinco", "seis", "siete", "ocho", "nueve", "diez",
             "once", "doce", "trece", "catorce", "quince", "dieciséis", "diecisiete", "dieciocho", "diecinueve", "veinte"];
@@ -762,8 +883,24 @@
             return Math.max(0, anios);
         }
 
-        function calcularLiquidacion(emp, liq) {
-            const basico = parseFloat(liq.basico) || 0;
+        function calcularLiquidacion(emp, liq, escalaGeneral) {
+            escalaGeneral = escalaGeneral || defaultEscalaGeneral();
+            const jornada = emp.jornada || "COMPLETA";
+            const fraccion = fraccionJornada(jornada);
+
+            // Básico y no remunerativo: por defecto se toman de la escala salarial
+            // general (según categoría) ajustados por la jornada del empleado.
+            // Si la liquidación puntual desactiva la escala general, se usan los
+            // valores cargados a mano para ese período.
+            const usarEscala = liq.usarEscalaGeneral !== false;
+
+            const basicoEscalaCategoria = parseFloat((escalaGeneral.basicos || {})[emp.categoria]) || 0;
+            const basicoEscala = basicoEscalaCategoria * fraccion;
+            const noRemEscala = (parseFloat(escalaGeneral.noRemunerativo) || 0) * fraccion;
+
+            const basico = usarEscala ? basicoEscala : (parseFloat(liq.basico) || 0);
+            const noRemunerativoBase = usarEscala ? noRemEscala : (parseFloat(liq.noRemunerativos) || 0);
+
             const aniosAntig = calcularAntiguedadAnios(emp.fechaIngreso, liq.periodo);
             const antigPct = Math.min(
                 aniosAntig * (parseFloat(liq.antigPctPorAnio) || 1),
@@ -782,19 +919,30 @@
 
             const totalRemunerativo = brutoParaPresentismo + presentismoMonto;
 
-            const noRemunerativo = parseFloat(liq.noRemunerativos) || 0;
+            // El concepto no remunerativo también genera antigüedad y presentismo
+            // (mismos porcentajes que sobre el básico), pero lo generado sigue
+            // siendo no remunerativo: no entra a totalRemunerativo, por lo que no
+            // afecta jubilación ni Ley 19.032. Solo impacta las deducciones que ya
+            // afectaba el no remunerativo (obra social y cuota sindical), vía
+            // baseAportes más abajo.
+            const antigNoRemunMonto = noRemunerativoBase * antigPct / 100;
+            const brutoNoRemunParaPresentismo = noRemunerativoBase + antigNoRemunMonto;
+            const presentismoNoRemunMonto = liq.presentismo ? brutoNoRemunParaPresentismo * 0.0833 : 0;
 
-            const jubilacion = totalRemunerativo * 0.11;
-            const ley19032 = totalRemunerativo * 0.03;
+            const noRemunerativo = brutoNoRemunParaPresentismo + presentismoNoRemunMonto;
 
             // Base imponible para la obra social
-
 
             const baseAportes = totalRemunerativo + noRemunerativo;
 
             // Aporte del 3%
-            const jornada = emp.jornada || "COMPLETA";
-            const factorJornada = (jornada === "MEDIA") ? 2 : 1;
+            const jubilacion = totalRemunerativo * 0.11;
+            const ley19032 = totalRemunerativo * 0.03;
+
+            // Los trabajadores a jornada reducida aportan a la obra social sobre
+            // una base ficta equivalente a la jornada completa (se "infla" la base
+            // en proporción inversa a la fracción de jornada trabajada).
+            const factorJornada = fraccion > 0 ? (1 / fraccion) : 1;
             const baseCalculoOS = baseAportes * factorJornada;
 
             const obraSocial = baseCalculoOS * 0.03;
@@ -810,8 +958,10 @@
             const neto = totalBruto - totalDeducciones;
 
             return {
+                jornada, fraccion, usarEscala, basico, basicoEscala, noRemEscala,
                 aniosAntig, antigPct, antigMonto, valorHora, he50, he100, otrosRemun,
-                presentismoMonto, totalRemunerativo, noRemunerativo,
+                presentismoMonto, totalRemunerativo,
+                noRemunerativoBase, antigNoRemunMonto, presentismoNoRemunMonto, noRemunerativo,
                 jubilacion, ley19032, obraSocial, sindical, otrasDeducciones, totalDeducciones,
                 totalBruto, neto
             };
@@ -823,13 +973,20 @@
             const { jsPDF } = window.jspdf;
             const doc = new jsPDF({ unit: "mm", format: "a4" });
             const W = 210;
+            // Se quitó el texto legal que iba suelto al pie de la hoja (fuera de
+            // los recibos) para poder estirar cada bloque y dar más aire a la firma.
+            const BLOCK_H = 136;
+            const TOP_MARGIN = 8;
+            const GAP = 10;
+            const y1 = TOP_MARGIN;
+            const y2 = y1 + BLOCK_H + GAP;
 
             function bloque(y, tag) {
                 const left = 14, right = W - 14;
-                const bottom = y + 128;
+                const bottom = y + BLOCK_H;
                 doc.setDrawColor(20, 20, 20);
                 doc.setLineWidth(0.4);
-                doc.rect(left, y, right - left, 128);
+                doc.rect(left, y, right - left, BLOCK_H);
 
                 // Header
                 doc.setFont("times", "bold"); doc.setFontSize(12);
@@ -865,65 +1022,68 @@
                 ly += 5;
                 doc.text(`Categoría: ${emp.categoria || "-"}`, col1, ly);
                 doc.text(`Antigüedad: ${calc.aniosAntig} año(s)`, col2, ly);
+                ly += 5;
+                doc.text(`Jornada: ${JORNADA_LABEL[calc.jornada] || "-"}`, col1, ly);
 
                 ly += 4;
                 doc.line(left, ly, right, ly);
                 ly += 5;
 
-                // Tabla conceptos remunerativos
-                doc.setFont("helvetica", "bold"); doc.setFontSize(8);
-                doc.text("CONCEPTOS REMUNERATIVOS", col1, ly);
-                doc.text("MONTO", right - 4, ly, { align: "right" });
-                ly += 4;
-                doc.setFont("helvetica", "normal");
-                const filaR = (label, val) => {
-                    if (Math.abs(val) < 0.005) return;
-                    doc.text(label, col1, ly);
-                    doc.text("$ " + fmt(val), right - 4, ly, { align: "right" });
-                    ly += 4.3;
-                };
-                filaR("Sueldo básico", parseFloat(liq.basico) || 0);
-                filaR(`Antigüedad (${calc.antigPct.toFixed(1)}%)`, calc.antigMonto);
-                filaR("Presentismo", calc.presentismoMonto);
-                filaR("Horas extra al 50%", calc.he50);
-                filaR("Horas extra al 100%", calc.he100);
-                filaR(liq.otrosRemunerativosConcepto || "Otras remuneraciones", calc.otrosRemun);
+                // Tabla única: Concepto | Remunerativo | No remunerativo | Deducción
+                const xRemun = left + 120;
+                const xNoRemun = left + 152;
+                const xDeduc = right - 4;
 
-                if (calc.noRemunerativo > 0) {
-                    filaR(liq.noRemunerativosConcepto || "Asignación no remunerativa", calc.noRemunerativo);
-                }
-
-                doc.setFont("helvetica", "bold");
-                doc.text("Total bruto", col1, ly);
-                doc.text("$ " + fmt(calc.totalBruto), right - 4, ly, { align: "right" });
-                ly += 6;
-
-                doc.setFont("helvetica", "bold"); doc.setFontSize(8);
-                doc.text("DEDUCCIONES", col1, ly);
-                doc.text("MONTO", right - 4, ly, { align: "right" });
-                ly += 4;
-                doc.setFont("helvetica", "normal");
-                const filaD = (label, val) => {
-                    if (Math.abs(val) < 0.005) return;
-                    doc.text(label, col1, ly);
-                    doc.text("$ " + fmt(val), right - 4, ly, { align: "right" });
-                    ly += 4.3;
-                };
-                filaD("Jubilación (Ley 24.241) 11%", calc.jubilacion);
-                filaD("Ley 19.032 (INSSJP/PAMI) 3%", calc.ley19032);
-                filaD("Obra social 3%", calc.obraSocial);
-                if (calc.sindical > 0) filaD("Cuota sindical FAECyS 2,5%", calc.sindical);
-                if (calc.otrasDeducciones > 0) filaD(liq.otrasDeduccionesConcepto || "Otras deducciones", calc.otrasDeducciones);
-
-                doc.setFont("helvetica", "bold");
-                doc.text("Total deducciones", col1, ly);
-                doc.text("$ " + fmt(calc.totalDeducciones), right - 4, ly, { align: "right" });
+                doc.setFont("helvetica", "bold"); doc.setFontSize(7);
+                doc.text("CONCEPTO", col1, ly);
+                doc.text("REMUNERATIVO", xRemun, ly, { align: "right" });
+                doc.text("NO REMUNER.", xNoRemun, ly, { align: "right" });
+                doc.text("DEDUCCIÓN", xDeduc, ly, { align: "right" });
+                ly += 2;
+                doc.setDrawColor(20, 20, 20); doc.setLineWidth(0.2);
+                doc.line(col1, ly, xDeduc, ly);
                 ly += 3.5;
+
+                doc.setFont("helvetica", "normal"); doc.setFontSize(7.3);
+                const filaTabla = (concepto, remun, norem, deduc) => {
+                    const r = remun || 0, n = norem || 0, d = deduc || 0;
+                    if (Math.abs(r) < 0.005 && Math.abs(n) < 0.005 && Math.abs(d) < 0.005) return;
+                    doc.text(concepto, col1, ly);
+                    if (Math.abs(r) >= 0.005) doc.text("$ " + fmt(r), xRemun, ly, { align: "right" });
+                    if (Math.abs(n) >= 0.005) doc.text("$ " + fmt(n), xNoRemun, ly, { align: "right" });
+                    if (Math.abs(d) >= 0.005) doc.text("$ " + fmt(d), xDeduc, ly, { align: "right" });
+                    ly += 4.3;
+                };
+
+                filaTabla("Sueldo básico", calc.basico, 0, 0);
+                filaTabla(`Antigüedad (${calc.antigPct.toFixed(1)}%)`, calc.antigMonto, 0, 0);
+                filaTabla("Presentismo", calc.presentismoMonto, 0, 0);
+                filaTabla("Horas extra al 50%", calc.he50, 0, 0);
+                filaTabla("Horas extra al 100%", calc.he100, 0, 0);
+                filaTabla(liq.otrosRemunerativosConcepto || "Otras remuneraciones", calc.otrosRemun, 0, 0);
+                filaTabla(liq.noRemunerativosConcepto || "Asignación no remunerativa", 0, calc.noRemunerativoBase, 0);
+                filaTabla("Antigüedad s/no remunerativo", 0, calc.antigNoRemunMonto, 0);
+                filaTabla("Presentismo s/no remunerativo", 0, calc.presentismoNoRemunMonto, 0);
+                filaTabla("Jubilación (Ley 24.241) 11%", 0, 0, calc.jubilacion);
+                filaTabla("Ley 19.032 (INSSJP/PAMI) 3%", 0, 0, calc.ley19032);
+                filaTabla("Obra social 3%", 0, 0, calc.obraSocial);
+                filaTabla("Cuota sindical FAECyS 4,5%", 0, 0, calc.sindical);
+                filaTabla(liq.otrasDeduccionesConcepto || "Otras deducciones", 0, 0, calc.otrasDeducciones);
+
+                doc.setDrawColor(20, 20, 20); doc.setLineWidth(0.2);
+                doc.line(col1, ly - 1.5, xDeduc, ly - 1.5);
+                ly += 1;
+                doc.setFont("helvetica", "bold"); doc.setFontSize(7.5);
+                doc.text("TOTALES", col1, ly);
+                doc.text("$ " + fmt(calc.totalRemunerativo), xRemun, ly, { align: "right" });
+                doc.text("$ " + fmt(calc.noRemunerativo), xNoRemun, ly, { align: "right" });
+                doc.text("$ " + fmt(calc.totalDeducciones), xDeduc, ly, { align: "right" });
+                ly += 5.5;
 
                 // Neto — pegado justo debajo de las deducciones, sin espacio muerto,
                 // pero sin invadir la zona reservada para las firmas al pie del bloque.
                 const netoMinY = ly;
-                const netoMaxY = bottom - 20; // deja lugar fijo para el texto "Son:" y las firmas
+                const netoMaxY = bottom - 28; // deja lugar fijo para el texto "Son:", el texto legal y la firma
                 const netoY = Math.min(netoMinY, netoMaxY);
 
                 doc.setDrawColor(20, 20, 20);
@@ -951,25 +1111,21 @@
 
                 if (tag === "ORIGINAL") {
                     // Solo firma del empleador
-                    doc.line(right - 70, y + 124, right - 4, y + 124);
-                    doc.text("Firma y aclaración del empleador", right - 37, y + 126.5, { align: "center" });
+                    doc.line(right - 70, y + BLOCK_H - 4, right - 4, y + BLOCK_H - 4);
+                    doc.text("Firma y aclaración del empleador", right - 37, y + BLOCK_H - 1.5, { align: "center" });
                 } else {
                     // Solo firma del empleado
-                    doc.line(right - 70, y + 124, right - 4, y + 124);
-                    doc.text("Recibí conforme — Firma del empleado", right - 37, y + 126.5, { align: "center" });
+                    doc.line(right - 70, y + BLOCK_H - 4, right - 4, y + BLOCK_H - 4);
+                    doc.text("Recibí conforme — Firma del empleado", right - 37, y + BLOCK_H - 1.5, { align: "center" });
                 }
             }
 
-            bloque(10, "ORIGINAL");
+            bloque(y1, "ORIGINAL");
             doc.setLineDashPattern([1.2, 1.2], 0);
             doc.setDrawColor(140, 132, 113);
-            doc.line(14, 145, W - 14, 145);
+            doc.line(14, y1 + BLOCK_H + GAP / 2, W - 14, y1 + BLOCK_H + GAP / 2);
             doc.setLineDashPattern([], 0);
-            bloque(150, "DUPLICADO");
-
-            doc.setFont("helvetica", "normal"); doc.setFontSize(6.5);
-            doc.setTextColor(90, 90, 90);
-            doc.text("Art. 138, 139 y 140 - Ley de Contrato de Trabajo N° 20.744. El duplicado debe quedar en poder del trabajador.", 14, 289);
+            bloque(y2, "DUPLICADO");
 
             const nombreArchivo = `Recibo_${(emp.nombre || "empleado").replace(/\s+/g, "_")}_${liq.periodo || "periodo"}.pdf`;
             doc.save(nombreArchivo);
@@ -1010,9 +1166,12 @@
             );
         }
 
-        function Sidebar({ empleados, selectedId, onSelect, onNuevo, onDelete }) {
+        function Sidebar({ empleados, selectedId, onSelect, onNuevo, onDelete, vista, onVerEscala }) {
             return (
                 <div className="sidebar">
+                    <button className={"sidebar-scale-btn" + (vista === "escala" ? " active" : "")} onClick={onVerEscala}>
+                        ⚙ Escala salarial general
+                    </button>
                     <h2>Empleados ({empleados.length})</h2>
                     <button className="btn btn-primary btn-block" onClick={onNuevo} style={{ marginBottom: 14 }}>
                         + Nuevo empleado
@@ -1021,7 +1180,7 @@
                         <div className="hint" style={{ padding: "0 4px" }}>Todavía no cargaste empleados.</div>
                     )}
                     {empleados.map(emp => (
-                        <div key={emp.id} className={"emp-item" + (emp.id === selectedId ? " active" : "")}
+                        <div key={emp.id} className={"emp-item" + (vista === "empleado" && emp.id === selectedId ? " active" : "")}
                             onClick={() => onSelect(emp.id)}>
                             <div>
                                 <div className="name">{emp.nombre || "(sin nombre)"}</div>
@@ -1031,6 +1190,87 @@
                         </div>
                     ))}
                 </div>
+            );
+        }
+
+        function EscalaGeneralView({ escalaGeneral, updateEscalaGeneral }) {
+            const [catSeleccionada, setCatSeleccionada] = useState(CATEGORIAS[0]);
+            const basicos = escalaGeneral.basicos || {};
+            const basicoActual = basicos[catSeleccionada] || "";
+            const cantidadCargadas = CATEGORIAS.filter(c => basicos[c]).length;
+
+            return (
+                <React.Fragment>
+                    <div className="topline">
+                        <div>
+                            <h1>Escala salarial general</h1>
+                            <div className="sub">Se aplica a todos los empleados, ajustada según su jornada</div>
+                        </div>
+                        <span className="badge">CCT 130/75</span>
+                    </div>
+                    <div className="card">
+                        <h3>Básico remunerativo por categoría</h3>
+                        <div className="grid">
+                            <div className="field">
+                                <label>Categoría</label>
+                                <select value={catSeleccionada} onChange={e => setCatSeleccionada(e.target.value)}>
+                                    {CATEGORIAS.map(c => <option key={c} value={c}>{c}</option>)}
+                                </select>
+                            </div>
+                            <div className="field">
+                                <label>Básico jornada completa ($)</label>
+                                <input type="number" step="0.01" value={basicoActual}
+                                    onChange={e => updateEscalaGeneral({
+                                        basicos: { ...basicos, [catSeleccionada]: e.target.value }
+                                    })} />
+                            </div>
+                        </div>
+                        <div className="escala-resumen">
+                            {CATEGORIAS.map(c => {
+                                const val = basicos[c];
+                                return (
+                                    <button type="button" key={c}
+                                        className={"escala-chip" + (c === catSeleccionada ? " active" : "") + (val ? " filled" : "")}
+                                        onClick={() => setCatSeleccionada(c)}>
+                                        <span className="chip-cat">{c}</span>
+                                        <span className="chip-val">{val ? "$ " + fmt(parseFloat(val) || 0) : "Sin cargar"}</span>
+                                    </button>
+                                );
+                            })}
+                        </div>
+                        <div className="hint">
+                            {cantidadCargadas} de {CATEGORIAS.length} categorías cargadas. Elegí una categoría del
+                            desplegable (o tocá una de las tarjetas de abajo) y cargá su básico de convenio vigente
+                            según la paritaria de FAECyS / Cámara Argentina de Comercio. Cada empleado toma
+                            automáticamente el valor de su categoría, ajustado por su jornada (completa, tres
+                            cuartos o media).
+                        </div>
+                    </div>
+                    <div className="card">
+                        <h3>Asignación no remunerativa general</h3>
+                        <div className="grid">
+                            <div className="field">
+                                <label>Monto jornada completa ($)</label>
+                                <input type="number" step="0.01" value={escalaGeneral.noRemunerativo}
+                                    onChange={e => updateEscalaGeneral({ noRemunerativo: e.target.value })} />
+                            </div>
+                            <div className="field">
+                                <label>Concepto</label>
+                                <input type="text" value={escalaGeneral.noRemunerativoConcepto}
+                                    onChange={e => updateEscalaGeneral({ noRemunerativoConcepto: e.target.value })} />
+                            </div>
+                        </div>
+                        <div className="hint">
+                            Este monto también se ajusta de forma proporcional a la jornada de cada empleado
+                            (100% jornada completa, 75% tres cuartos, 50% media jornada).
+                        </div>
+                    </div>
+                    <div className="hint" style={{ padding: "0 4px" }}>
+                        En la pestaña "Liquidación" de cada empleado podés desactivar la escala general para
+                        ese período puntual y cargar un básico o no remunerativo manual (por ejemplo, ante un
+                        caso especial).
+                    </div>
+                </React.Fragment>
             );
         }
 
@@ -1065,6 +1305,7 @@
                                 onChange={e => updateEmp({ jornada: e.target.value })}
                             >
                                 <option value="COMPLETA">Jornada completa</option>
+                                <option value="TRES_CUARTOS">Tres cuartos de jornada</option>
                                 <option value="MEDIA">Media jornada</option>
                             </select>
                         </div>
@@ -1083,19 +1324,28 @@
                         <label htmlFor="afiliado">Afiliado al sindicato — descuenta cuota sindical 4,5%</label>
                     </div>
                     <div className="hint">
-                        Los valores del salario básico por categoría se actualizan periódicamente por paritarias.
-                        Verificá el valor vigente en el acuerdo salarial de FAECyS / Cámara Argentina de Comercio antes
-                        de liquidar, e ingresalo en la pestaña "Liquidación".
+                        El básico y la asignación no remunerativa se toman por defecto de la "Escala salarial
+                        general" (según la categoría de arriba), ajustados por la jornada. Cargá o revisá esos
+                        valores generales desde el botón "⚙ Escala salarial general" en el panel izquierdo.
                     </div>
                 </div>
             );
         }
 
         function LiquidacionTab({ emp, liq, updateLiq, calc, onGenerarPDF }) {
+            const usarEscala = liq.usarEscalaGeneral !== false;
             return (
                 <React.Fragment>
                     <div className="card">
                         <h3>Período y conceptos remunerativos</h3>
+                        <div className="field checkbox" style={{ marginBottom: 16 }}>
+                            <input type="checkbox" id="usarEscala" checked={usarEscala}
+                                onChange={e => updateLiq({ usarEscalaGeneral: e.target.checked })} />
+                            <label htmlFor="usarEscala">
+                                Usar escala salarial general (básico y no remunerativo ajustados por jornada:
+                                {" "}{JORNADA_LABEL[calc.jornada] || "jornada completa"})
+                            </label>
+                        </div>
                         <div className="grid">
                             <div className="field">
                                 <label>Período (mes/año)</label>
@@ -1119,7 +1369,11 @@
                             </div>
                             <div className="field">
                                 <label>Sueldo básico ($)</label>
-                                <input type="number" step="0.01" value={liq.basico} onChange={e => updateLiq({ basico: e.target.value })} />
+                                <input type="number" step="0.01"
+                                    disabled={usarEscala}
+                                    value={usarEscala ? calc.basico.toFixed(2) : liq.basico}
+                                    onChange={e => updateLiq({ basico: e.target.value })} />
+                                {usarEscala && <div className="hint">Tomado de la escala general × {(calc.fraccion * 100).toFixed(0)}% (jornada).</div>}
                             </div>
                             <div className="field">
                                 <label>% antigüedad por año</label>
@@ -1155,7 +1409,11 @@
                         <div className="grid">
                             <div className="field">
                                 <label>Asignación no remunerativa ($)</label>
-                                <input type="number" step="0.01" className="no-spinner" value={liq.noRemunerativos} onChange={e => updateLiq({ noRemunerativos: e.target.value })} />
+                                <input type="number" step="0.01" className="no-spinner"
+                                    disabled={usarEscala}
+                                    value={usarEscala ? calc.noRemunerativoBase.toFixed(2) : liq.noRemunerativos}
+                                    onChange={e => updateLiq({ noRemunerativos: e.target.value })} />
+                                {usarEscala && <div className="hint">Tomado de la escala general × {(calc.fraccion * 100).toFixed(0)}% (jornada).</div>}
                             </div>
                             <div className="field">
                                 <label>Concepto (no remunerativo)</label>
@@ -1172,6 +1430,13 @@
                                     onChange={e => updateLiq({ otrasDeduccionesConcepto: e.target.value })} />
                             </div>
                         </div>
+                        <div className="hint">
+                            La asignación no remunerativa también genera antigüedad ({calc.antigPct.toFixed(1)}%)
+                            y presentismo (8,33% si corresponde), con los mismos porcentajes que el básico. Lo
+                            generado sigue siendo no remunerativo: no suma a la base de jubilación ni Ley 19.032,
+                            solo afecta obra social y cuota sindical (las mismas deducciones que ya afecta la
+                            asignación no remunerativa).
+                        </div>
                     </div>
 
                     <div className="card">
@@ -1179,13 +1444,15 @@
                         <table className="calc-table">
                             <tbody>
                                 <tr><td className="calc-section-title" colSpan="2">Remunerativo</td></tr>
-                                <tr><td className="label">Sueldo básico</td><td className="amount">$ {fmt(parseFloat(liq.basico) || 0)}</td></tr>
+                                <tr><td className="label">Sueldo básico</td><td className="amount">$ {fmt(calc.basico)}</td></tr>
                                 <tr><td className="label">Antigüedad ({calc.antigPct.toFixed(1)}% — {calc.aniosAntig} año/s)</td><td className="amount">$ {fmt(calc.antigMonto)}</td></tr>
                                 <tr><td className="label">Presentismo</td><td className="amount">$ {fmt(calc.presentismoMonto)}</td></tr>
                                 <tr><td className="label">Horas extra 50%</td><td className="amount">$ {fmt(calc.he50)}</td></tr>
                                 <tr><td className="label">Horas extra 100%</td><td className="amount">$ {fmt(calc.he100)}</td></tr>
                                 <tr><td className="label">Otras remuneraciones</td><td className="amount">$ {fmt(calc.otrosRemun)}</td></tr>
-                                <tr><td className="label">No remunerativo</td><td className="amount">$ {fmt(calc.noRemunerativo)}</td></tr>
+                                <tr><td className="label">Asignación no remunerativa</td><td className="amount">$ {fmt(calc.noRemunerativoBase)}</td></tr>
+                                <tr><td className="label">Antigüedad s/no remunerativo ({calc.antigPct.toFixed(1)}%)</td><td className="amount">$ {fmt(calc.antigNoRemunMonto)}</td></tr>
+                                <tr><td className="label">Presentismo s/no remunerativo</td><td className="amount">$ {fmt(calc.presentismoNoRemunMonto)}</td></tr>
                                 <tr className="total"><td>Total bruto</td><td className="amount">$ {fmt(calc.totalBruto)}</td></tr>
 
                                 <tr><td className="calc-section-title" colSpan="2">Deducciones</td></tr>
@@ -1235,31 +1502,43 @@
                             <div><span>Antigüedad</span>{calc.aniosAntig} año(s)</div>
                             <div><span>Período</span>{liq.periodoLabel || "-"}</div>
                             <div><span>Fecha de pago</span>{liq.fechaPago || "-"}</div>
+                            <div><span>Jornada</span>{JORNADA_LABEL[calc.jornada] || "-"}</div>
                         </div>
 
-                        <div className="section-h">Conceptos remunerativos</div>
-                        <table>
-                            <thead><tr><th>Concepto</th><th style={{ textAlign: "right" }}>Monto</th></tr></thead>
+                        <div className="section-h">Detalle de haberes y deducciones</div>
+                        <table className="detalle-table">
+                            <thead>
+                                <tr>
+                                    <th>Concepto</th>
+                                    <th style={{ textAlign: "right" }}>Remunerativo</th>
+                                    <th style={{ textAlign: "right" }}>No remunerativo</th>
+                                    <th style={{ textAlign: "right" }}>Deducción</th>
+                                </tr>
+                            </thead>
                             <tbody>
-                                <tr><td>Sueldo básico</td><td className="num">$ {fmt(parseFloat(liq.basico) || 0)}</td></tr>
-                                {calc.antigMonto > 0 && <tr><td>Antigüedad</td><td className="num">$ {fmt(calc.antigMonto)}</td></tr>}
-                                {calc.presentismoMonto > 0 && <tr><td>Presentismo</td><td className="num">$ {fmt(calc.presentismoMonto)}</td></tr>}
-                                {calc.he50 > 0 && <tr><td>Horas extra 50%</td><td className="num">$ {fmt(calc.he50)}</td></tr>}
-                                {calc.he100 > 0 && <tr><td>Horas extra 100%</td><td className="num">$ {fmt(calc.he100)}</td></tr>}
-                                {calc.otrosRemun > 0 && <tr><td>{liq.otrosRemunerativosConcepto || "Otras remuneraciones"}</td><td className="num">$ {fmt(calc.otrosRemun)}</td></tr>}
-                                {calc.noRemunerativo > 0 && <tr><td>{liq.noRemunerativosConcepto || "Asig. no remunerativa"}</td><td className="num">$ {fmt(calc.noRemunerativo)}</td></tr>}
+                                <tr><td>Sueldo básico</td><td className="num">$ {fmt(calc.basico)}</td><td className="num"></td><td className="num"></td></tr>
+                                {calc.antigMonto > 0 && <tr><td>Antigüedad</td><td className="num">$ {fmt(calc.antigMonto)}</td><td className="num"></td><td className="num"></td></tr>}
+                                {calc.presentismoMonto > 0 && <tr><td>Presentismo</td><td className="num">$ {fmt(calc.presentismoMonto)}</td><td className="num"></td><td className="num"></td></tr>}
+                                {calc.he50 > 0 && <tr><td>Horas extra 50%</td><td className="num">$ {fmt(calc.he50)}</td><td className="num"></td><td className="num"></td></tr>}
+                                {calc.he100 > 0 && <tr><td>Horas extra 100%</td><td className="num">$ {fmt(calc.he100)}</td><td className="num"></td><td className="num"></td></tr>}
+                                {calc.otrosRemun > 0 && <tr><td>{liq.otrosRemunerativosConcepto || "Otras remuneraciones"}</td><td className="num">$ {fmt(calc.otrosRemun)}</td><td className="num"></td><td className="num"></td></tr>}
+                                {calc.noRemunerativoBase > 0 && <tr><td>{liq.noRemunerativosConcepto || "Asig. no remunerativa"}</td><td className="num"></td><td className="num">$ {fmt(calc.noRemunerativoBase)}</td><td className="num"></td></tr>}
+                                {calc.antigNoRemunMonto > 0 && <tr><td>Antigüedad s/no remunerativo</td><td className="num"></td><td className="num">$ {fmt(calc.antigNoRemunMonto)}</td><td className="num"></td></tr>}
+                                {calc.presentismoNoRemunMonto > 0 && <tr><td>Presentismo s/no remunerativo</td><td className="num"></td><td className="num">$ {fmt(calc.presentismoNoRemunMonto)}</td><td className="num"></td></tr>}
+                                <tr><td>Jubilación 11%</td><td className="num"></td><td className="num"></td><td className="num">$ {fmt(calc.jubilacion)}</td></tr>
+                                <tr><td>Ley 19.032 3%</td><td className="num"></td><td className="num"></td><td className="num">$ {fmt(calc.ley19032)}</td></tr>
+                                <tr><td>Obra social 3%</td><td className="num"></td><td className="num"></td><td className="num">$ {fmt(calc.obraSocial)}</td></tr>
+                                {calc.sindical > 0 && <tr><td>Cuota sindical 4,5%</td><td className="num"></td><td className="num"></td><td className="num">$ {fmt(calc.sindical)}</td></tr>}
+                                {calc.otrasDeducciones > 0 && <tr><td>{liq.otrasDeduccionesConcepto || "Otras deducciones"}</td><td className="num"></td><td className="num"></td><td className="num">$ {fmt(calc.otrasDeducciones)}</td></tr>}
                             </tbody>
-                        </table>
-
-                        <div className="section-h">Deducciones</div>
-                        <table>
-                            <tbody>
-                                <tr><td>Jubilación 11%</td><td className="num">$ {fmt(calc.jubilacion)}</td></tr>
-                                <tr><td>Ley 19.032 3%</td><td className="num">$ {fmt(calc.ley19032)}</td></tr>
-                                <tr><td>Obra social 3%</td><td className="num">$ {fmt(calc.obraSocial)}</td></tr>
-                                {calc.sindical > 0 && <tr><td>Cuota sindical 4,5%</td><td className="num">$ {fmt(calc.sindical)}</td></tr>}
-                                {calc.otrasDeducciones > 0 && <tr><td>{liq.otrasDeduccionesConcepto || "Otras deducciones"}</td><td className="num">$ {fmt(calc.otrasDeducciones)}</td></tr>}
-                            </tbody>
+                            <tfoot>
+                                <tr className="totales-row">
+                                    <td>Totales</td>
+                                    <td className="num">$ {fmt(calc.totalRemunerativo)}</td>
+                                    <td className="num">$ {fmt(calc.noRemunerativo)}</td>
+                                    <td className="num">$ {fmt(calc.totalDeducciones)}</td>
+                                </tr>
+                            </tfoot>
                         </table>
 
                         <div className="neto-row">
@@ -1299,6 +1578,7 @@
         function defaultLiq() {
             return {
                 periodo: "", periodoLabel: "", fechaPago: "", fechaPagoRaw: "",
+                usarEscalaGeneral: true,
                 basico: "", antigPctPorAnio: "1", horasExtra50: "", horasExtra100: "",
                 otrosRemunerativos: "", otrosRemunerativosConcepto: "",
                 presentismo: false,
@@ -1318,6 +1598,8 @@
             const [selectedId, setSelectedId] = useState(null);
             const [tab, setTab] = useState("datos");
             const [liqPorEmpleado, setLiqPorEmpleado] = useState({});
+            const [escalaGeneral, setEscalaGeneral] = useState(defaultEscalaGeneral());
+            const [vista, setVista] = useState("empleado"); // "empleado" | "escala"
             const [toast, setToast] = useState(null);
             const fileInputRef = useRef(null);
 
@@ -1325,9 +1607,9 @@
             const liq = emp ? (liqPorEmpleado[emp.id] || defaultLiq()) : defaultLiq();
 
             const calc = useMemo(() => emp
-                ? calcularLiquidacion(emp, liq)
-                : calcularLiquidacion({}, defaultLiq()),
-                [emp, liq]);
+                ? calcularLiquidacion(emp, liq, escalaGeneral)
+                : calcularLiquidacion({}, defaultLiq(), escalaGeneral),
+                [emp, liq, escalaGeneral]);
 
             function mostrarToast(msg) {
                 setToast(msg);
@@ -1337,11 +1619,12 @@
             function nuevoEmpleado() {
                 const nuevo = {
                     id: uid(), nombre: "", cuil: "", legajo: "", categoria: "", fechaIngreso: "",
-                    domicilio: "", afiliadoSindicato: false
+                    domicilio: "", afiliadoSindicato: false, jornada: "COMPLETA"
                 };
                 setEmpleados([...empleados, nuevo]);
                 setSelectedId(nuevo.id);
                 setTab("datos");
+                setVista("empleado");
             }
 
             function updateEmp(patch) {
@@ -1352,6 +1635,10 @@
                 setLiqPorEmpleado({ ...liqPorEmpleado, [emp.id]: { ...liq, ...patch } });
             }
 
+            function updateEscalaGeneral(patch) {
+                setEscalaGeneral({ ...escalaGeneral, ...patch });
+            }
+
             function borrarEmpleado(id) {
                 if (!confirm("¿Eliminar este empleado y su liquidación cargada?")) return;
                 setEmpleados(empleados.filter(e => e.id !== id));
@@ -1359,8 +1646,8 @@
             }
 
             function onGenerarPDF() {
-                if (!emp.nombre || !liq.periodo || !liq.basico) {
-                    mostrarToast("Completá al menos nombre, período y sueldo básico antes de emitir el recibo.");
+                if (!emp.nombre || !liq.periodo || (!calc.usarEscala && !liq.basico) || (calc.usarEscala && !emp.categoria)) {
+                    mostrarToast("Completá al menos nombre, categoría/período o sueldo básico antes de emitir el recibo.");
                     return;
                 }
                 generarPDF(empresa, emp, liq, calc);
@@ -1368,7 +1655,7 @@
             }
 
             function exportarJSON() {
-                const data = { empresa, empleados, liqPorEmpleado };
+                const data = { empresa, empleados, liqPorEmpleado, escalaGeneral };
                 const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement("a");
@@ -1387,6 +1674,7 @@
                         if (data.empresa) setEmpresa(data.empresa);
                         if (data.empleados) setEmpleados(data.empleados);
                         if (data.liqPorEmpleado) setLiqPorEmpleado(data.liqPorEmpleado);
+                        if (data.escalaGeneral) setEscalaGeneral({ ...defaultEscalaGeneral(), ...data.escalaGeneral });
                         mostrarToast("Datos importados ✓");
                     } catch (err) {
                         mostrarToast("No se pudo leer el archivo JSON.");
@@ -1400,21 +1688,25 @@
                 <div className="app">
                     <TopBar empresa={empresa} setEmpresa={setEmpresa} />
                     <div className="layout">
-                        <Sidebar empleados={empleados} selectedId={selectedId}
-                            onSelect={(id) => { setSelectedId(id); setTab("datos"); }}
-                            onNuevo={nuevoEmpleado} onDelete={borrarEmpleado} />
+                        <Sidebar empleados={empleados} selectedId={selectedId} vista={vista}
+                            onSelect={(id) => { setSelectedId(id); setTab("datos"); setVista("empleado"); }}
+                            onNuevo={nuevoEmpleado} onDelete={borrarEmpleado}
+                            onVerEscala={() => setVista("escala")} />
                         <div className="main">
-                            {!emp && (
+                            {vista === "escala" && (
+                                <EscalaGeneralView escalaGeneral={escalaGeneral} updateEscalaGeneral={updateEscalaGeneral} />
+                            )}
+                            {vista === "empleado" && !emp && (
                                 <div className="empty-state">
                                     <span className="mark">Ningún empleado seleccionado</span>
                                 </div>
                             )}
-                            {emp && (
+                            {vista === "empleado" && emp && (
                                 <React.Fragment>
                                     <div className="topline">
                                         <div>
                                             <h1>{emp.nombre || "Nuevo empleado"}</h1>
-                                            <div className="sub">{emp.categoria || "Sin categoría asignada"} · {emp.legajo ? "Legajo " + emp.legajo : "Sin legajo"}</div>
+                                            <div className="sub">{emp.categoria || "Sin categoría asignada"} · {emp.legajo ? "Legajo " + emp.legajo : "Sin legajo"} · {JORNADA_LABEL[emp.jornada || "COMPLETA"]}</div>
                                         </div>
                                         <span className="badge">CCT 130/75</span>
                                     </div>
