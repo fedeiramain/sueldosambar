@@ -1,0 +1,1451 @@
+<!DOCTYPE html>
+<html lang="es">
+
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Recibos de Sueldo — Empleados de Comercio</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link
+        href="https://fonts.googleapis.com/css2?family=Source+Serif+4:opsz,wght@8..60,400;8..60,600;8..60,700&family=Inter:wght@400;500;600;700&family=JetBrains+Mono:wght@400;500;700&display=swap"
+        rel="stylesheet">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.24.7/babel.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <style>
+        :root {
+            --navy: #16213E;
+            --navy-light: #243257;
+            --paper: #F6F4EE;
+            --card: #FFFFFF;
+            --ink: #1D1C1A;
+            --ink-soft: #5B584F;
+            --teal: #0D7377;
+            --teal-dark: #0A5559;
+            --amber: #B7791F;
+            --red: #9B2C2C;
+            --line: #DAD5C6;
+            --line-strong: #B9B2A0;
+        }
+
+        * {
+            box-sizing: border-box;
+        }
+
+        html,
+        body {
+            margin: 0;
+            padding: 0;
+        }
+
+        body {
+            background: var(--paper);
+            color: var(--ink);
+            font-family: 'Inter', sans-serif;
+            -webkit-font-smoothing: antialiased;
+        }
+
+        #root {
+            min-height: 100vh;
+        }
+
+        .app {
+            display: flex;
+            flex-direction: column;
+            min-height: 100vh;
+        }
+
+        /* ---------- Top bar ---------- */
+        .topbar {
+            background: var(--navy);
+            color: #EDEBE3;
+            padding: 18px 28px;
+            display: flex;
+            align-items: baseline;
+            justify-content: space-between;
+            gap: 16px;
+            flex-wrap: wrap;
+            border-bottom: 3px solid var(--teal);
+        }
+
+        .brand {
+            display: flex;
+            align-items: baseline;
+            gap: 10px;
+        }
+
+        .brand .mark {
+            font-family: 'Source Serif 4', serif;
+            font-weight: 700;
+            font-size: 22px;
+            letter-spacing: 0.3px;
+        }
+
+        .brand .tag {
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 1.6px;
+            color: #B9C4D6;
+        }
+
+        .topbar input[type=text] {
+            background: transparent;
+            border: none;
+            border-bottom: 1px solid #4C5A7D;
+            color: #EDEBE3;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 13px;
+            padding: 4px 2px;
+            width: 180px;
+        }
+
+        .topbar input[type=text]:focus {
+            outline: none;
+            border-bottom-color: var(--teal);
+        }
+
+        .topbar .field-label {
+            font-size: 10px;
+            color: #8E9CB8;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            display: block;
+            margin-bottom: 2px;
+        }
+
+        .topbar-fields {
+            display: flex;
+            gap: 22px;
+            flex-wrap: wrap;
+        }
+
+        /* ---------- Layout ---------- */
+        .layout {
+            display: flex;
+            flex: 1;
+            min-height: 0;
+        }
+
+        .sidebar {
+            width: 280px;
+            flex-shrink: 0;
+            background: #EFEBDF;
+            border-right: 1px solid var(--line-strong);
+            padding: 20px 14px;
+            overflow-y: auto;
+        }
+
+        .sidebar h2 {
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 1.4px;
+            color: var(--ink-soft);
+            margin: 0 0 12px 4px;
+        }
+
+        .emp-item {
+            display: flex;
+            align-items: center;
+            justify-content: space-between;
+            padding: 10px 12px;
+            border-radius: 3px;
+            cursor: pointer;
+            margin-bottom: 4px;
+            border: 1px solid transparent;
+        }
+
+        .emp-item:hover {
+            background: #E4DFCF;
+        }
+
+        .emp-item.active {
+            background: var(--card);
+            border-color: var(--line-strong);
+            box-shadow: 0 1px 0 rgba(0, 0, 0, 0.03);
+        }
+
+        .emp-item .name {
+            font-weight: 600;
+            font-size: 13.5px;
+        }
+
+        .emp-item .sub {
+            font-size: 11px;
+            color: var(--ink-soft);
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        .emp-item .del {
+            opacity: 0;
+            color: var(--red);
+            font-size: 16px;
+            line-height: 1;
+            padding: 2px 6px;
+            border-radius: 3px;
+        }
+
+        .emp-item:hover .del {
+            opacity: 0.6;
+        }
+
+        .emp-item .del:hover {
+            opacity: 1;
+            background: #F4E3E3;
+        }
+
+        .btn {
+            font-family: 'Inter', sans-serif;
+            font-weight: 600;
+            font-size: 13px;
+            border: none;
+            border-radius: 3px;
+            padding: 9px 16px;
+            cursor: pointer;
+            transition: filter .12s ease;
+        }
+
+        .btn:hover {
+            filter: brightness(1.08);
+        }
+
+        .btn:active {
+            filter: brightness(0.95);
+        }
+
+        .btn-primary {
+            background: var(--teal);
+            color: #fff;
+        }
+
+        .btn-ghost {
+            background: transparent;
+            color: var(--navy);
+            border: 1px solid var(--line-strong);
+        }
+
+        .btn-block {
+            width: 100%;
+        }
+
+        .btn-sm {
+            padding: 6px 10px;
+            font-size: 12px;
+        }
+
+        .main {
+            flex: 1;
+            overflow-y: auto;
+            padding: 28px 34px;
+            min-width: 0;
+        }
+
+        .empty-state {
+            max-width: 440px;
+            margin: 60px auto;
+            text-align: center;
+            color: var(--ink-soft);
+        }
+
+        .empty-state .mark {
+            font-family: 'Source Serif 4', serif;
+            font-size: 20px;
+            color: var(--ink);
+            display: block;
+            margin-bottom: 8px;
+        }
+
+        .tabs {
+            display: flex;
+            gap: 2px;
+            margin-bottom: 22px;
+            border-bottom: 1px solid var(--line-strong);
+        }
+
+        .tab {
+            padding: 10px 18px;
+            font-size: 13px;
+            font-weight: 600;
+            color: var(--ink-soft);
+            cursor: pointer;
+            border-bottom: 2px solid transparent;
+            margin-bottom: -1px;
+        }
+
+        .tab.active {
+            color: var(--navy);
+            border-bottom-color: var(--teal);
+        }
+
+        .card {
+            background: var(--card);
+            border: 1px solid var(--line);
+            border-radius: 4px;
+            padding: 22px 24px;
+            margin-bottom: 18px;
+        }
+
+        .card h3 {
+            font-family: 'Source Serif 4', serif;
+            font-size: 16px;
+            margin: 0 0 16px;
+            color: var(--navy);
+            border-bottom: 1px dashed var(--line-strong);
+            padding-bottom: 8px;
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(200px, 1fr));
+            gap: 14px 18px;
+        }
+
+        .field label {
+            display: block;
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 0.6px;
+            color: var(--ink-soft);
+            margin-bottom: 5px;
+            font-weight: 600;
+        }
+
+        .field input,
+        .field select {
+            width: 100%;
+            padding: 8px 10px;
+            border: 1px solid var(--line-strong);
+            border-radius: 3px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 13.5px;
+            background: #FCFBF8;
+            color: var(--ink);
+        }
+
+        .field input:focus,
+        .field select:focus {
+            outline: none;
+            border-color: var(--teal);
+            background: #fff;
+        }
+
+        .field input.no-spinner::-webkit-outer-spin-button,
+        .field input.no-spinner::-webkit-inner-spin-button {
+            -webkit-appearance: none;
+            margin: 0;
+        }
+
+        .field input.no-spinner[type=number] {
+            -moz-appearance: textfield;
+        }
+
+        .field.checkbox {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-top: 6px;
+        }
+
+        .field.checkbox input {
+            width: auto;
+        }
+
+        .field.checkbox label {
+            margin: 0;
+            text-transform: none;
+            font-weight: 500;
+            letter-spacing: 0;
+            font-size: 13px;
+        }
+
+        .hint {
+            font-size: 11.5px;
+            color: var(--ink-soft);
+            margin-top: 4px;
+            line-height: 1.4;
+        }
+
+        .actions-row {
+            display: flex;
+            gap: 10px;
+            margin-top: 18px;
+        }
+
+        .calc-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 13px;
+        }
+
+        .calc-table td {
+            padding: 6px 4px;
+            border-bottom: 1px solid var(--line);
+        }
+
+        .calc-table td.label {
+            color: var(--ink-soft);
+        }
+
+        .calc-table td.amount {
+            text-align: right;
+            font-weight: 600;
+        }
+
+        .calc-table tr.total td {
+            border-top: 2px solid var(--navy);
+            border-bottom: none;
+            font-weight: 700;
+            font-size: 14.5px;
+            color: var(--navy);
+            padding-top: 10px;
+        }
+
+        .calc-section-title {
+            font-size: 11px;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            color: var(--teal-dark);
+            font-weight: 700;
+            margin: 16px 0 4px;
+        }
+
+        .calc-section-title:first-child {
+            margin-top: 0;
+        }
+
+        /* ---------- Recibo preview (facsímil) ---------- */
+        .recibo-wrap {
+            background: #DEDACB;
+            padding: 24px;
+            border-radius: 4px;
+        }
+
+        .recibo {
+            background: #fff;
+            max-width: 760px;
+            margin: 0 auto 22px;
+            border: 1px solid #999;
+            box-shadow: 0 2px 10px rgba(0, 0, 0, .12);
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 11.5px;
+            color: #111;
+            font-weight: 700;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .recibo .copy-tag {
+            position: absolute;
+            top: 10px;
+            right: 14px;
+            font-family: 'Inter', sans-serif;
+            font-weight: 700;
+            font-size: 10px;
+            letter-spacing: 2px;
+            color: var(--teal-dark);
+            border: 1px solid var(--teal-dark);
+            padding: 2px 8px;
+            border-radius: 2px;
+        }
+
+        .recibo-inner {
+            padding: 20px 24px;
+        }
+
+        .recibo-head {
+            display: flex;
+            justify-content: space-between;
+            border-bottom: 2px solid #111;
+            padding-bottom: 10px;
+            margin-bottom: 10px;
+        }
+
+        .recibo-head .razon {
+            font-family: 'Source Serif 4', serif;
+            font-weight: 700;
+            font-size: 15px;
+        }
+
+        .recibo-head .datos-emp {
+            font-size: 10.5px;
+            line-height: 1.5;
+            color: #333;
+        }
+
+        .recibo-head .titulo {
+            text-align: right;
+        }
+
+        .recibo-head .titulo .t1 {
+            font-weight: 700;
+            font-size: 13px;
+            letter-spacing: 0.5px;
+        }
+
+        .recibo-head .titulo .t2 {
+            font-size: 10px;
+            color: #555;
+        }
+
+        .recibo-meta {
+            display: grid;
+            grid-template-columns: 1fr 1fr 1fr;
+            gap: 4px 14px;
+            font-size: 10.5px;
+            margin-bottom: 10px;
+            padding-bottom: 8px;
+            border-bottom: 1px dashed #999;
+        }
+
+        .recibo-meta div span {
+            display: block;
+            color: #777;
+            font-size: 9px;
+            text-transform: uppercase;
+        }
+
+        .recibo table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-bottom: 1px;
+        }
+
+        .recibo table th {
+            text-align: left;
+            font-size: 9px;
+            text-transform: uppercase;
+            color: #666;
+            border-bottom: 1px solid #333;
+            padding: 3px 4px;
+        }
+
+        .recibo table td {
+            padding: 3px 4px;
+            border-bottom: 1px solid #eee;
+            font-size: 11px;
+        }
+
+        .recibo table td.num {
+            text-align: right;
+        }
+
+        .recibo .section-h {
+            font-family: 'Inter', sans-serif;
+            font-weight: 700;
+            font-size: 9.5px;
+            text-transform: uppercase;
+            letter-spacing: 0.8px;
+            background: #EFEBDF;
+            padding: 3px 6px;
+            margin-top: 8px;
+        }
+
+        .recibo .neto-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            background: #fff;
+            color: #000;
+            border: 1px solid #000;
+            padding: 8px 12px;
+            margin-top: 1px;
+            border-radius: 0;
+            font-weight: bold;
+        }
+
+        .recibo .neto-row .lbl {
+            font-family: 'Inter', sans-serif;
+            font-weight: 700;
+            font-size: 12px;
+            letter-spacing: 0.5px;
+        }
+
+        .recibo .neto-row .val {
+            font-size: 16px;
+            font-weight: 700;
+        }
+
+        .recibo .en-letras {
+            font-size: 10px;
+            color: #555;
+            font-style: italic;
+            margin-top: 4px;
+        }
+
+        .recibo .firmas {
+            display: flex;
+            justify-content: space-between;
+            margin-top: 26px;
+            padding-top: 8px;
+        }
+
+        .recibo .firma-box {
+            width: 46%;
+            text-align: center;
+            border-top: 1px solid #333;
+            padding-top: 4px;
+            font-size: 9.5px;
+            color: #444;
+        }
+
+        .recibo .legal {
+            font-size: 8.5px;
+            color: #777;
+            margin-top: 14px;
+            line-height: 1.5;
+            border-top: 1px dashed #ccc;
+            padding-top: 6px;
+        }
+
+        .perforation {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            max-width: 760px;
+            margin: 0 auto;
+            padding: 2px 0;
+        }
+
+        .perforation .dots {
+            flex: 1;
+            border-top: 2px dashed #8A8471;
+        }
+
+        .perforation .scissors {
+            font-size: 13px;
+            color: #8A8471;
+        }
+
+        .topline {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 18px;
+        }
+
+        .topline h1 {
+            font-family: 'Source Serif 4', serif;
+            font-size: 22px;
+            margin: 0;
+            color: var(--navy);
+        }
+
+        .topline .sub {
+            font-size: 12.5px;
+            color: var(--ink-soft);
+        }
+
+        .badge {
+            display: inline-block;
+            font-size: 10px;
+            font-weight: 700;
+            letter-spacing: 0.6px;
+            text-transform: uppercase;
+            padding: 3px 8px;
+            border-radius: 10px;
+            background: #E3EFEE;
+            color: var(--teal-dark);
+        }
+
+        .toast {
+            position: fixed;
+            bottom: 22px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: var(--navy);
+            color: #fff;
+            padding: 10px 20px;
+            border-radius: 4px;
+            font-size: 13px;
+            box-shadow: 0 4px 16px rgba(0, 0, 0, 0.25);
+            z-index: 50;
+        }
+
+        .footer-note {
+            font-size: 11px;
+            color: var(--ink-soft);
+            text-align: center;
+            padding: 14px;
+            border-top: 1px solid var(--line);
+        }
+
+        ::-webkit-scrollbar {
+            width: 10px;
+            height: 10px;
+        }
+
+        ::-webkit-scrollbar-thumb {
+            background: #C9C2AC;
+            border-radius: 6px;
+        }
+    </style>
+</head>
+
+<body>
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useMemo, useRef } = React;
+
+        /* ===================== Utilidades ===================== */
+
+        const fmt = (n) => {
+            if (isNaN(n)) n = 0;
+            return n.toLocaleString('es-AR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+        };
+
+        const uid = () => Math.random().toString(36).slice(2, 10);
+
+        const CATEGORIAS = [
+            "Maestranza y Servicios",
+            "Administrativo \"C\"",
+            "Administrativo \"B\"",
+            "Administrativo \"A\"",
+            "Maestranza \"C\"",
+            "Maestranza \"B\"",
+            "Maestranza \"A\"",
+            "Cajero",
+        ];
+
+        // Número a letras (pesos argentinos)
+        const UNIDADES = ["", "uno", "dos", "tres", "cuatro", "cinco", "seis", "siete", "ocho", "nueve", "diez",
+            "once", "doce", "trece", "catorce", "quince", "dieciséis", "diecisiete", "dieciocho", "diecinueve", "veinte"];
+        const DECENAS = ["", "", "veinte", "treinta", "cuarenta", "cincuenta", "sesenta", "setenta", "ochenta", "noventa"];
+        const CENTENAS = ["", "ciento", "doscientos", "trescientos", "cuatrocientos", "quinientos", "seiscientos", "setecientos", "ochocientos", "novecientos"];
+
+        function tresDigitos(n) {
+            if (n === 0) return "";
+            if (n === 100) return "cien";
+            let s = "";
+            const c = Math.floor(n / 100), r = n % 100;
+            if (c > 0) s += CENTENAS[c] + " ";
+            if (r <= 20) s += UNIDADES[r];
+            else {
+                const d = Math.floor(r / 10), u = r % 10;
+                s += DECENAS[d] + (u > 0 ? " y " + UNIDADES[u] : "");
+            }
+            return s.trim();
+        }
+
+        function numeroALetras(num) {
+            num = Math.round(num);
+            if (num === 0) return "cero";
+            let partes = [];
+            const millones = Math.floor(num / 1000000);
+            const miles = Math.floor((num % 1000000) / 1000);
+            const resto = num % 1000;
+            if (millones > 0) partes.push((millones === 1 ? "un millón" : tresDigitos(millones) + " millones"));
+            if (miles > 0) partes.push((miles === 1 ? "mil" : tresDigitos(miles) + " mil"));
+            if (resto > 0) partes.push(tresDigitos(resto));
+            return partes.join(" ").trim();
+        }
+
+        function pesosEnLetras(monto) {
+            const entero = Math.floor(monto);
+            const centavos = Math.round((monto - entero) * 100);
+            const letrasEntero = numeroALetras(entero);
+            const cap = letrasEntero.charAt(0).toUpperCase() + letrasEntero.slice(1);
+            return `${cap} con ${centavos.toString().padStart(2, '0')}/100 pesos`;
+        }
+
+        /* ===================== Cálculo de liquidación ===================== */
+
+        function calcularAntiguedadAnios(fechaIngreso, periodo) {
+            if (!fechaIngreso) return 0;
+            const ingreso = new Date(fechaIngreso + "T00:00:00");
+            const [anio, mes] = (periodo || "").split("-").map(x => parseInt(x, 10));
+            const refFecha = (anio && mes) ? new Date(anio, mes - 1, 1) : new Date();
+            let anios = refFecha.getFullYear() - ingreso.getFullYear();
+            const m = refFecha.getMonth() - ingreso.getMonth();
+            if (m < 0) anios--;
+            return Math.max(0, anios);
+        }
+
+        function calcularLiquidacion(emp, liq) {
+            const basico = parseFloat(liq.basico) || 0;
+            const aniosAntig = calcularAntiguedadAnios(emp.fechaIngreso, liq.periodo);
+            const antigPct = Math.min(
+                aniosAntig * (parseFloat(liq.antigPctPorAnio) || 1),
+                35
+            );
+            const antigMonto = basico * antigPct / 100;
+
+            const valorHora = basico > 0 ? basico / 200 : 0;
+            const he50 = (parseFloat(liq.horasExtra50) || 0) * valorHora * 1.5;
+            const he100 = (parseFloat(liq.horasExtra100) || 0) * valorHora * 2;
+
+            const otrosRemun = parseFloat(liq.otrosRemunerativos) || 0;
+
+            const brutoParaPresentismo = basico + antigMonto + he50 + he100 + otrosRemun;
+            const presentismoMonto = liq.presentismo ? brutoParaPresentismo * 0.0833 : 0;
+
+            const totalRemunerativo = brutoParaPresentismo + presentismoMonto;
+
+            const noRemunerativo = parseFloat(liq.noRemunerativos) || 0;
+
+            const jubilacion = totalRemunerativo * 0.11;
+            const ley19032 = totalRemunerativo * 0.03;
+
+            // Base imponible para la obra social
+
+
+            const baseAportes = totalRemunerativo + noRemunerativo;
+
+            // Aporte del 3%
+            const jornada = emp.jornada || "COMPLETA";
+            const factorJornada = (jornada === "MEDIA") ? 2 : 1;
+            const baseCalculoOS = baseAportes * factorJornada;
+
+            const obraSocial = baseCalculoOS * 0.03;
+
+            // Solo para informar en el recibo
+
+            const sindical = emp.afiliadoSindicato ? baseAportes * 0.045 : 0;
+            const otrasDeducciones = parseFloat(liq.otrasDeducciones) || 0;
+
+            const totalDeducciones = jubilacion + ley19032 + obraSocial + sindical + otrasDeducciones;
+
+            const totalBruto = totalRemunerativo + noRemunerativo;
+            const neto = totalBruto - totalDeducciones;
+
+            return {
+                aniosAntig, antigPct, antigMonto, valorHora, he50, he100, otrosRemun,
+                presentismoMonto, totalRemunerativo, noRemunerativo,
+                jubilacion, ley19032, obraSocial, sindical, otrasDeducciones, totalDeducciones,
+                totalBruto, neto
+            };
+        }
+
+        /* ===================== Generación de PDF ===================== */
+
+        function generarPDF(empresa, emp, liq, calc) {
+            const { jsPDF } = window.jspdf;
+            const doc = new jsPDF({ unit: "mm", format: "a4" });
+            const W = 210;
+
+            function bloque(y, tag) {
+                const left = 14, right = W - 14;
+                const bottom = y + 128;
+                doc.setDrawColor(20, 20, 20);
+                doc.setLineWidth(0.4);
+                doc.rect(left, y, right - left, 128);
+
+                // Header
+                doc.setFont("times", "bold"); doc.setFontSize(12);
+                doc.text(empresa.razonSocial || "[Razón Social]", left + 4, y + 8);
+                doc.setFont("helvetica", "normal"); doc.setFontSize(8);
+                doc.text(`CUIT: ${empresa.cuit || "-"}   Domicilio: ${empresa.domicilio || "-"}`, left + 4, y + 13);
+                doc.text(`Actividad: ${empresa.actividad || "Comercio"}`, left + 4, y + 17);
+
+                doc.setFont("helvetica", "bold"); doc.setFontSize(10);
+                doc.text("RECIBO DE HABERES", right - 4, y + 8, { align: "right" });
+                doc.setFont("helvetica", "normal"); doc.setFontSize(8);
+                doc.text("CCT 130/75 — Empleados de Comercio", right - 4, y + 12, { align: "right" });
+                doc.setDrawColor(13, 115, 119); doc.setLineWidth(0.6);
+                doc.rect(right - 24, y + 15, 20, 5.5);
+                doc.setFont("helvetica", "bold"); doc.setFontSize(7.5);
+                doc.text(tag, right - 14, y + 19, { align: "center" });
+
+                doc.setDrawColor(20, 20, 20); doc.setLineWidth(0.2);
+                doc.line(left, y + 21, right, y + 21);
+
+                // Datos empleado
+                doc.setFont("helvetica", "normal"); doc.setFontSize(8.5);
+                let ly = y + 27;
+                const col1 = left + 4, col2 = left + 95;
+                doc.text(`Apellido y Nombre: ${emp.nombre || "-"}`, col1, ly);
+                doc.text(`Período: ${liq.periodoLabel || "-"}`, col2, ly);
+                ly += 5;
+                doc.text(`CUIL: ${emp.cuil || "-"}`, col1, ly);
+                doc.text(`Fecha de pago: ${liq.fechaPago || "-"}`, col2, ly);
+                ly += 5;
+                doc.text(`Legajo: ${emp.legajo || "-"}`, col1, ly);
+                doc.text(`Fecha de ingreso: ${emp.fechaIngreso || "-"}`, col2, ly);
+                ly += 5;
+                doc.text(`Categoría: ${emp.categoria || "-"}`, col1, ly);
+                doc.text(`Antigüedad: ${calc.aniosAntig} año(s)`, col2, ly);
+
+                ly += 4;
+                doc.line(left, ly, right, ly);
+                ly += 5;
+
+                // Tabla conceptos remunerativos
+                doc.setFont("helvetica", "bold"); doc.setFontSize(8);
+                doc.text("CONCEPTOS REMUNERATIVOS", col1, ly);
+                doc.text("MONTO", right - 4, ly, { align: "right" });
+                ly += 4;
+                doc.setFont("helvetica", "normal");
+                const filaR = (label, val) => {
+                    if (Math.abs(val) < 0.005) return;
+                    doc.text(label, col1, ly);
+                    doc.text("$ " + fmt(val), right - 4, ly, { align: "right" });
+                    ly += 4.3;
+                };
+                filaR("Sueldo básico", parseFloat(liq.basico) || 0);
+                filaR(`Antigüedad (${calc.antigPct.toFixed(1)}%)`, calc.antigMonto);
+                filaR("Presentismo", calc.presentismoMonto);
+                filaR("Horas extra al 50%", calc.he50);
+                filaR("Horas extra al 100%", calc.he100);
+                filaR(liq.otrosRemunerativosConcepto || "Otras remuneraciones", calc.otrosRemun);
+
+                if (calc.noRemunerativo > 0) {
+                    filaR(liq.noRemunerativosConcepto || "Asignación no remunerativa", calc.noRemunerativo);
+                }
+
+                doc.setFont("helvetica", "bold");
+                doc.text("Total bruto", col1, ly);
+                doc.text("$ " + fmt(calc.totalBruto), right - 4, ly, { align: "right" });
+                ly += 6;
+
+                doc.setFont("helvetica", "bold"); doc.setFontSize(8);
+                doc.text("DEDUCCIONES", col1, ly);
+                doc.text("MONTO", right - 4, ly, { align: "right" });
+                ly += 4;
+                doc.setFont("helvetica", "normal");
+                const filaD = (label, val) => {
+                    if (Math.abs(val) < 0.005) return;
+                    doc.text(label, col1, ly);
+                    doc.text("$ " + fmt(val), right - 4, ly, { align: "right" });
+                    ly += 4.3;
+                };
+                filaD("Jubilación (Ley 24.241) 11%", calc.jubilacion);
+                filaD("Ley 19.032 (INSSJP/PAMI) 3%", calc.ley19032);
+                filaD("Obra social 3%", calc.obraSocial);
+                if (calc.sindical > 0) filaD("Cuota sindical FAECyS 2,5%", calc.sindical);
+                if (calc.otrasDeducciones > 0) filaD(liq.otrasDeduccionesConcepto || "Otras deducciones", calc.otrasDeducciones);
+
+                doc.setFont("helvetica", "bold");
+                doc.text("Total deducciones", col1, ly);
+                doc.text("$ " + fmt(calc.totalDeducciones), right - 4, ly, { align: "right" });
+                ly += 3.5;
+
+                // Neto — pegado justo debajo de las deducciones, sin espacio muerto,
+                // pero sin invadir la zona reservada para las firmas al pie del bloque.
+                const netoMinY = ly;
+                const netoMaxY = bottom - 20; // deja lugar fijo para el texto "Son:" y las firmas
+                const netoY = Math.min(netoMinY, netoMaxY);
+
+                doc.setDrawColor(20, 20, 20);
+                doc.rect(left, netoY, right - left, 8);
+                doc.setTextColor(0, 0, 0);
+                doc.setFont("helvetica", "bold"); doc.setFontSize(9.5);
+                doc.text("NETO A COBRAR", left + 4, netoY + 5.5);
+                doc.text("$ " + fmt(calc.neto), right - 4, netoY + 5.5, { align: "right" });
+                doc.setTextColor(20, 20, 20);
+                doc.setFont("helvetica", "italic"); doc.setFontSize(7);
+                doc.text("Son: " + pesosEnLetras(calc.neto), left + 4, netoY + 11.5);
+
+                // Texto legal — pegado justo debajo de "Son: ... pesos"
+                doc.setFont("helvetica", "normal"); doc.setFontSize(6.3);
+                doc.setTextColor(120, 120, 120);
+                const legalTexto = "Art. 138, 139 y 140 - Ley de Contrato de Trabajo N\u00b0 20.744. Este comprobante detalla la totalidad de las remuneraciones y descuentos correspondientes al per\u00edodo indicado.";
+                const legalLineas = doc.splitTextToSize(legalTexto, ((right - left) / 2) - 4);
+                doc.text(legalLineas, left + 4, netoY + 15.5);
+                doc.setTextColor(20, 20, 20);
+
+                // firmas — siempre ancladas al pie del bloque
+                doc.setDrawColor(20, 20, 20); doc.setLineWidth(0.2);
+                doc.setFont("helvetica", "normal");
+                doc.setFontSize(6.5);
+
+                if (tag === "ORIGINAL") {
+                    // Solo firma del empleador
+                    doc.line(right - 70, y + 124, right - 4, y + 124);
+                    doc.text("Firma y aclaración del empleador", right - 37, y + 126.5, { align: "center" });
+                } else {
+                    // Solo firma del empleado
+                    doc.line(right - 70, y + 124, right - 4, y + 124);
+                    doc.text("Recibí conforme — Firma del empleado", right - 37, y + 126.5, { align: "center" });
+                }
+            }
+
+            bloque(10, "ORIGINAL");
+            doc.setLineDashPattern([1.2, 1.2], 0);
+            doc.setDrawColor(140, 132, 113);
+            doc.line(14, 145, W - 14, 145);
+            doc.setLineDashPattern([], 0);
+            bloque(150, "DUPLICADO");
+
+            doc.setFont("helvetica", "normal"); doc.setFontSize(6.5);
+            doc.setTextColor(90, 90, 90);
+            doc.text("Art. 138, 139 y 140 - Ley de Contrato de Trabajo N° 20.744. El duplicado debe quedar en poder del trabajador.", 14, 289);
+
+            const nombreArchivo = `Recibo_${(emp.nombre || "empleado").replace(/\s+/g, "_")}_${liq.periodo || "periodo"}.pdf`;
+            doc.save(nombreArchivo);
+        }
+
+        /* ===================== Componentes ===================== */
+
+        function TopBar({ empresa, setEmpresa }) {
+            return (
+                <div className="topbar">
+                    <div className="brand">
+                        <span className="mark">Recibos&nbsp;Comercio</span>
+                        <span className="tag">CCT 130/75</span>
+                    </div>
+                    <div className="topbar-fields">
+                        <div>
+                            <span className="field-label">Razón social</span>
+                            <input type="text" value={empresa.razonSocial}
+                                onChange={e => setEmpresa({ ...empresa, razonSocial: e.target.value })} />
+                        </div>
+                        <div>
+                            <span className="field-label">CUIT</span>
+                            <input type="text" value={empresa.cuit} placeholder="30-XXXXXXXX-X"
+                                onChange={e => setEmpresa({ ...empresa, cuit: e.target.value })} />
+                        </div>
+                        <div>
+                            <span className="field-label">Domicilio</span>
+                            <input type="text" value={empresa.domicilio}
+                                onChange={e => setEmpresa({ ...empresa, domicilio: e.target.value })} />
+                        </div>
+                        <div>
+                            <span className="field-label">Actividad</span>
+                            <input type="text" value={empresa.actividad}
+                                onChange={e => setEmpresa({ ...empresa, actividad: e.target.value })} />
+                        </div>
+                    </div>
+                </div>
+            );
+        }
+
+        function Sidebar({ empleados, selectedId, onSelect, onNuevo, onDelete }) {
+            return (
+                <div className="sidebar">
+                    <h2>Empleados ({empleados.length})</h2>
+                    <button className="btn btn-primary btn-block" onClick={onNuevo} style={{ marginBottom: 14 }}>
+                        + Nuevo empleado
+                    </button>
+                    {empleados.length === 0 && (
+                        <div className="hint" style={{ padding: "0 4px" }}>Todavía no cargaste empleados.</div>
+                    )}
+                    {empleados.map(emp => (
+                        <div key={emp.id} className={"emp-item" + (emp.id === selectedId ? " active" : "")}
+                            onClick={() => onSelect(emp.id)}>
+                            <div>
+                                <div className="name">{emp.nombre || "(sin nombre)"}</div>
+                                <div className="sub">{emp.categoria || "Sin categoría"}</div>
+                            </div>
+                            <div className="del" onClick={(e) => { e.stopPropagation(); onDelete(emp.id); }}>✕</div>
+                        </div>
+                    ))}
+                </div>
+            );
+        }
+
+        function DatosTab({ emp, updateEmp }) {
+            return (
+                <div className="card">
+                    <h3>Datos del empleado</h3>
+                    <div className="grid">
+                        <div className="field">
+                            <label>Apellido y nombre</label>
+                            <input type="text" value={emp.nombre} onChange={e => updateEmp({ nombre: e.target.value })} />
+                        </div>
+                        <div className="field">
+                            <label>CUIL</label>
+                            <input type="text" placeholder="20-XXXXXXXX-X" value={emp.cuil} onChange={e => updateEmp({ cuil: e.target.value })} />
+                        </div>
+                        <div className="field">
+                            <label>Legajo</label>
+                            <input type="text" value={emp.legajo} onChange={e => updateEmp({ legajo: e.target.value })} />
+                        </div>
+                        <div className="field">
+                            <label>Categoría (CCT 130/75)</label>
+                            <select value={emp.categoria} onChange={e => updateEmp({ categoria: e.target.value })}>
+                                <option value="">Seleccionar...</option>
+                                {CATEGORIAS.map(c => <option key={c} value={c}>{c}</option>)}
+                            </select>
+                        </div>
+                        <div className="field">
+                            <label>Jornada</label>
+                            <select
+                                value={emp.jornada || "COMPLETA"}
+                                onChange={e => updateEmp({ jornada: e.target.value })}
+                            >
+                                <option value="COMPLETA">Jornada completa</option>
+                                <option value="MEDIA">Media jornada</option>
+                            </select>
+                        </div>
+                        <div className="field">
+                            <label>Fecha de ingreso</label>
+                            <input type="date" value={emp.fechaIngreso} onChange={e => updateEmp({ fechaIngreso: e.target.value })} />
+                        </div>
+                        <div className="field">
+                            <label>Domicilio</label>
+                            <input type="text" value={emp.domicilio} onChange={e => updateEmp({ domicilio: e.target.value })} />
+                        </div>
+                    </div>
+                    <div className="field checkbox">
+                        <input type="checkbox" id="afiliado" checked={emp.afiliadoSindicato}
+                            onChange={e => updateEmp({ afiliadoSindicato: e.target.checked })} />
+                        <label htmlFor="afiliado">Afiliado al sindicato — descuenta cuota sindical 4,5%</label>
+                    </div>
+                    <div className="hint">
+                        Los valores del salario básico por categoría se actualizan periódicamente por paritarias.
+                        Verificá el valor vigente en el acuerdo salarial de FAECyS / Cámara Argentina de Comercio antes
+                        de liquidar, e ingresalo en la pestaña "Liquidación".
+                    </div>
+                </div>
+            );
+        }
+
+        function LiquidacionTab({ emp, liq, updateLiq, calc, onGenerarPDF }) {
+            return (
+                <React.Fragment>
+                    <div className="card">
+                        <h3>Período y conceptos remunerativos</h3>
+                        <div className="grid">
+                            <div className="field">
+                                <label>Período (mes/año)</label>
+                                <input type="month" value={liq.periodo}
+                                    onChange={e => {
+                                        const v = e.target.value;
+                                        const [y, m] = v.split("-");
+                                        const meses = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"];
+                                        const label = (y && m) ? `${meses[parseInt(m, 10) - 1]} ${y}` : "";
+                                        updateLiq({ periodo: v, periodoLabel: label });
+                                    }} />
+                            </div>
+                            <div className="field">
+                                <label>Fecha de pago</label>
+                                <input type="date" value={liq.fechaPagoRaw || ""}
+                                    onChange={e => {
+                                        const v = e.target.value;
+                                        const d = v ? new Date(v + "T00:00:00").toLocaleDateString('es-AR') : "";
+                                        updateLiq({ fechaPagoRaw: v, fechaPago: d });
+                                    }} />
+                            </div>
+                            <div className="field">
+                                <label>Sueldo básico ($)</label>
+                                <input type="number" step="0.01" value={liq.basico} onChange={e => updateLiq({ basico: e.target.value })} />
+                            </div>
+                            <div className="field">
+                                <label>% antigüedad por año</label>
+                                <input type="number" step="0.1" value={liq.antigPctPorAnio} onChange={e => updateLiq({ antigPctPorAnio: e.target.value })} />
+                            </div>
+                            <div className="field">
+                                <label>Horas extra al 50%</label>
+                                <input type="number" step="0.5" value={liq.horasExtra50} onChange={e => updateLiq({ horasExtra50: e.target.value })} />
+                            </div>
+                            <div className="field">
+                                <label>Horas extra al 100%</label>
+                                <input type="number" step="0.5" value={liq.horasExtra100} onChange={e => updateLiq({ horasExtra100: e.target.value })} />
+                            </div>
+                            <div className="field">
+                                <label>Otras remuneraciones ($)</label>
+                                <input type="number" step="0.01" value={liq.otrosRemunerativos} onChange={e => updateLiq({ otrosRemunerativos: e.target.value })} />
+                            </div>
+                            <div className="field">
+                                <label>Concepto (otras remun.)</label>
+                                <input type="text" placeholder="Comisiones, premios..." value={liq.otrosRemunerativosConcepto}
+                                    onChange={e => updateLiq({ otrosRemunerativosConcepto: e.target.value })} />
+                            </div>
+                        </div>
+                        <div className="field checkbox">
+                            <input type="checkbox" id="presentismo" checked={liq.presentismo}
+                                onChange={e => updateLiq({ presentismo: e.target.checked })} />
+                            <label htmlFor="presentismo">Corresponde presentismo (8,33% aprox.)</label>
+                        </div>
+                    </div>
+
+                    <div className="card">
+                        <h3>No remunerativo y otras deducciones</h3>
+                        <div className="grid">
+                            <div className="field">
+                                <label>Asignación no remunerativa ($)</label>
+                                <input type="number" step="0.01" className="no-spinner" value={liq.noRemunerativos} onChange={e => updateLiq({ noRemunerativos: e.target.value })} />
+                            </div>
+                            <div className="field">
+                                <label>Concepto (no remunerativo)</label>
+                                <input type="text" placeholder="Acuerdo paritario..." value={liq.noRemunerativosConcepto}
+                                    onChange={e => updateLiq({ noRemunerativosConcepto: e.target.value })} />
+                            </div>
+                            <div className="field">
+                                <label>Otras deducciones ($)</label>
+                                <input type="number" step="0.01" value={liq.otrasDeducciones} onChange={e => updateLiq({ otrasDeducciones: e.target.value })} />
+                            </div>
+                            <div className="field">
+                                <label>Concepto (otras deducc.)</label>
+                                <input type="text" placeholder="Anticipo, embargo..." value={liq.otrasDeduccionesConcepto}
+                                    onChange={e => updateLiq({ otrasDeduccionesConcepto: e.target.value })} />
+                            </div>
+                        </div>
+                    </div>
+
+                    <div className="card">
+                        <h3>Resumen de liquidación</h3>
+                        <table className="calc-table">
+                            <tbody>
+                                <tr><td className="calc-section-title" colSpan="2">Remunerativo</td></tr>
+                                <tr><td className="label">Sueldo básico</td><td className="amount">$ {fmt(parseFloat(liq.basico) || 0)}</td></tr>
+                                <tr><td className="label">Antigüedad ({calc.antigPct.toFixed(1)}% — {calc.aniosAntig} año/s)</td><td className="amount">$ {fmt(calc.antigMonto)}</td></tr>
+                                <tr><td className="label">Presentismo</td><td className="amount">$ {fmt(calc.presentismoMonto)}</td></tr>
+                                <tr><td className="label">Horas extra 50%</td><td className="amount">$ {fmt(calc.he50)}</td></tr>
+                                <tr><td className="label">Horas extra 100%</td><td className="amount">$ {fmt(calc.he100)}</td></tr>
+                                <tr><td className="label">Otras remuneraciones</td><td className="amount">$ {fmt(calc.otrosRemun)}</td></tr>
+                                <tr><td className="label">No remunerativo</td><td className="amount">$ {fmt(calc.noRemunerativo)}</td></tr>
+                                <tr className="total"><td>Total bruto</td><td className="amount">$ {fmt(calc.totalBruto)}</td></tr>
+
+                                <tr><td className="calc-section-title" colSpan="2">Deducciones</td></tr>
+                                <tr><td className="label">Jubilación 11%</td><td className="amount">$ {fmt(calc.jubilacion)}</td></tr>
+                                <tr><td className="label">Ley 19.032 3%</td><td className="amount">$ {fmt(calc.ley19032)}</td></tr>
+                                <tr><td className="label">Obra social 3%</td><td className="amount">$ {fmt(calc.obraSocial)}</td></tr>
+                                <tr><td className="label">Cuota sindical 4,5%</td><td className="amount">$ {fmt(calc.sindical)}</td></tr>
+                                <tr><td className="label">Otras deducciones</td><td className="amount">$ {fmt(calc.otrasDeducciones)}</td></tr>
+                                <tr className="total"><td>Total deducciones</td><td className="amount">$ {fmt(calc.totalDeducciones)}</td></tr>
+
+                                <tr className="total"><td>NETO A COBRAR</td><td className="amount">$ {fmt(calc.neto)}</td></tr>
+                            </tbody>
+                        </table>
+                        <div className="actions-row">
+                            <button className="btn btn-primary" onClick={onGenerarPDF}>Confirmar y emitir PDF</button>
+                        </div>
+                    </div>
+                </React.Fragment>
+            );
+        }
+
+        function VistaPreviaTab({ empresa, emp, liq, calc }) {
+            const Recibo = ({ tag }) => (
+                <div className="recibo">
+                    <div className="copy-tag">{tag}</div>
+                    <div className="recibo-inner">
+                        <div className="recibo-head">
+                            <div>
+                                <div className="razon">{empresa.razonSocial || "[Razón Social]"}</div>
+                                <div className="datos-emp">
+                                    CUIT: {empresa.cuit || "-"}<br />
+                                    {empresa.domicilio || "Domicilio no cargado"}<br />
+                                    Actividad: {empresa.actividad || "Comercio"}
+                                </div>
+                            </div>
+                            <div className="titulo">
+                                <div className="t1">RECIBO DE HABERES</div>
+                                <div className="t2">CCT 130/75 — Empleados de Comercio</div>
+                            </div>
+                        </div>
+                        <div className="recibo-meta">
+                            <div><span>Apellido y nombre</span>{emp.nombre || "-"}</div>
+                            <div><span>CUIL</span>{emp.cuil || "-"}</div>
+                            <div><span>Legajo</span>{emp.legajo || "-"}</div>
+                            <div><span>Categoría</span>{emp.categoria || "-"}</div>
+                            <div><span>Fecha de ingreso</span>{emp.fechaIngreso || "-"}</div>
+                            <div><span>Antigüedad</span>{calc.aniosAntig} año(s)</div>
+                            <div><span>Período</span>{liq.periodoLabel || "-"}</div>
+                            <div><span>Fecha de pago</span>{liq.fechaPago || "-"}</div>
+                        </div>
+
+                        <div className="section-h">Conceptos remunerativos</div>
+                        <table>
+                            <thead><tr><th>Concepto</th><th style={{ textAlign: "right" }}>Monto</th></tr></thead>
+                            <tbody>
+                                <tr><td>Sueldo básico</td><td className="num">$ {fmt(parseFloat(liq.basico) || 0)}</td></tr>
+                                {calc.antigMonto > 0 && <tr><td>Antigüedad</td><td className="num">$ {fmt(calc.antigMonto)}</td></tr>}
+                                {calc.presentismoMonto > 0 && <tr><td>Presentismo</td><td className="num">$ {fmt(calc.presentismoMonto)}</td></tr>}
+                                {calc.he50 > 0 && <tr><td>Horas extra 50%</td><td className="num">$ {fmt(calc.he50)}</td></tr>}
+                                {calc.he100 > 0 && <tr><td>Horas extra 100%</td><td className="num">$ {fmt(calc.he100)}</td></tr>}
+                                {calc.otrosRemun > 0 && <tr><td>{liq.otrosRemunerativosConcepto || "Otras remuneraciones"}</td><td className="num">$ {fmt(calc.otrosRemun)}</td></tr>}
+                                {calc.noRemunerativo > 0 && <tr><td>{liq.noRemunerativosConcepto || "Asig. no remunerativa"}</td><td className="num">$ {fmt(calc.noRemunerativo)}</td></tr>}
+                            </tbody>
+                        </table>
+
+                        <div className="section-h">Deducciones</div>
+                        <table>
+                            <tbody>
+                                <tr><td>Jubilación 11%</td><td className="num">$ {fmt(calc.jubilacion)}</td></tr>
+                                <tr><td>Ley 19.032 3%</td><td className="num">$ {fmt(calc.ley19032)}</td></tr>
+                                <tr><td>Obra social 3%</td><td className="num">$ {fmt(calc.obraSocial)}</td></tr>
+                                {calc.sindical > 0 && <tr><td>Cuota sindical 4,5%</td><td className="num">$ {fmt(calc.sindical)}</td></tr>}
+                                {calc.otrasDeducciones > 0 && <tr><td>{liq.otrasDeduccionesConcepto || "Otras deducciones"}</td><td className="num">$ {fmt(calc.otrasDeducciones)}</td></tr>}
+                            </tbody>
+                        </table>
+
+                        <div className="neto-row">
+                            <div className="lbl">NETO A COBRAR</div>
+                            <div className="val">$ {fmt(calc.neto)}</div>
+                        </div>
+                        <div className="en-letras">Son: {pesosEnLetras(calc.neto)}</div>
+                        <div className="legal">
+                            Art. 138, 139 y 140 — Ley de Contrato de Trabajo N° 20.744. Este comprobante detalla la totalidad de las remuneraciones
+                            y descuentos correspondientes al período indicado.
+                        </div>
+
+                        <div className="firmas">
+                            {tag === "ORIGINAL" ? (
+                                <div className="firma-box">
+                                    Firma y aclaración del empleador
+                                </div>
+                            ) : (
+                                <div className="firma-box" style={{ marginLeft: "auto" }}>
+                                    Recibí conforme — Firma del empleado
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                </div>
+            );
+
+            return (
+                <div className="recibo-wrap">
+                    <Recibo tag="ORIGINAL" />
+                    <div className="perforation"><span className="scissors">✂</span><span className="dots"></span></div>
+                    <Recibo tag="DUPLICADO" />
+                </div>
+            );
+        }
+
+        function defaultLiq() {
+            return {
+                periodo: "", periodoLabel: "", fechaPago: "", fechaPagoRaw: "",
+                basico: "", antigPctPorAnio: "1", horasExtra50: "", horasExtra100: "",
+                otrosRemunerativos: "", otrosRemunerativosConcepto: "",
+                presentismo: false,
+                noRemunerativos: "", noRemunerativosConcepto: "",
+                otrasDeducciones: "", otrasDeduccionesConcepto: "",
+            };
+        }
+
+        function App() {
+            const [empresa, setEmpresa] = useState({
+                razonSocial: "Servicios de Limpieza Ambar SAS",
+                cuit: "30-71601678-8",
+                domicilio: "Maciel 130 - OF 8",
+                actividad: "Servicios de Limpieza"
+            });
+            const [empleados, setEmpleados] = useState([]);
+            const [selectedId, setSelectedId] = useState(null);
+            const [tab, setTab] = useState("datos");
+            const [liqPorEmpleado, setLiqPorEmpleado] = useState({});
+            const [toast, setToast] = useState(null);
+            const fileInputRef = useRef(null);
+
+            const emp = empleados.find(e => e.id === selectedId) || null;
+            const liq = emp ? (liqPorEmpleado[emp.id] || defaultLiq()) : defaultLiq();
+
+            const calc = useMemo(() => emp
+                ? calcularLiquidacion(emp, liq)
+                : calcularLiquidacion({}, defaultLiq()),
+                [emp, liq]);
+
+            function mostrarToast(msg) {
+                setToast(msg);
+                setTimeout(() => setToast(null), 2600);
+            }
+
+            function nuevoEmpleado() {
+                const nuevo = {
+                    id: uid(), nombre: "", cuil: "", legajo: "", categoria: "", fechaIngreso: "",
+                    domicilio: "", afiliadoSindicato: false
+                };
+                setEmpleados([...empleados, nuevo]);
+                setSelectedId(nuevo.id);
+                setTab("datos");
+            }
+
+            function updateEmp(patch) {
+                setEmpleados(empleados.map(e => e.id === emp.id ? { ...e, ...patch } : e));
+            }
+
+            function updateLiq(patch) {
+                setLiqPorEmpleado({ ...liqPorEmpleado, [emp.id]: { ...liq, ...patch } });
+            }
+
+            function borrarEmpleado(id) {
+                if (!confirm("¿Eliminar este empleado y su liquidación cargada?")) return;
+                setEmpleados(empleados.filter(e => e.id !== id));
+                if (selectedId === id) setSelectedId(null);
+            }
+
+            function onGenerarPDF() {
+                if (!emp.nombre || !liq.periodo || !liq.basico) {
+                    mostrarToast("Completá al menos nombre, período y sueldo básico antes de emitir el recibo.");
+                    return;
+                }
+                generarPDF(empresa, emp, liq, calc);
+                mostrarToast("Recibo generado y descargado ✓");
+            }
+
+            function exportarJSON() {
+                const data = { empresa, empleados, liqPorEmpleado };
+                const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement("a");
+                a.href = url; a.download = "empleados_comercio.json"; a.click();
+                URL.revokeObjectURL(url);
+                mostrarToast("Datos exportados a JSON ✓");
+            }
+
+            function importarJSON(e) {
+                const file = e.target.files[0];
+                if (!file) return;
+                const reader = new FileReader();
+                reader.onload = (ev) => {
+                    try {
+                        const data = JSON.parse(ev.target.result);
+                        if (data.empresa) setEmpresa(data.empresa);
+                        if (data.empleados) setEmpleados(data.empleados);
+                        if (data.liqPorEmpleado) setLiqPorEmpleado(data.liqPorEmpleado);
+                        mostrarToast("Datos importados ✓");
+                    } catch (err) {
+                        mostrarToast("No se pudo leer el archivo JSON.");
+                    }
+                };
+                reader.readAsText(file);
+                e.target.value = "";
+            }
+
+            return (
+                <div className="app">
+                    <TopBar empresa={empresa} setEmpresa={setEmpresa} />
+                    <div className="layout">
+                        <Sidebar empleados={empleados} selectedId={selectedId}
+                            onSelect={(id) => { setSelectedId(id); setTab("datos"); }}
+                            onNuevo={nuevoEmpleado} onDelete={borrarEmpleado} />
+                        <div className="main">
+                            {!emp && (
+                                <div className="empty-state">
+                                    <span className="mark">Ningún empleado seleccionado</span>
+                                </div>
+                            )}
+                            {emp && (
+                                <React.Fragment>
+                                    <div className="topline">
+                                        <div>
+                                            <h1>{emp.nombre || "Nuevo empleado"}</h1>
+                                            <div className="sub">{emp.categoria || "Sin categoría asignada"} · {emp.legajo ? "Legajo " + emp.legajo : "Sin legajo"}</div>
+                                        </div>
+                                        <span className="badge">CCT 130/75</span>
+                                    </div>
+                                    <div className="tabs">
+                                        <div className={"tab" + (tab === "datos" ? " active" : "")} onClick={() => setTab("datos")}>Datos del empleado</div>
+                                        <div className={"tab" + (tab === "liquidacion" ? " active" : "")} onClick={() => setTab("liquidacion")}>Liquidación</div>
+                                        <div className={"tab" + (tab === "vista" ? " active" : "")} onClick={() => setTab("vista")}>Vista previa del recibo</div>
+                                    </div>
+                                    {tab === "datos" && <DatosTab emp={emp} updateEmp={updateEmp} />}
+                                    {tab === "liquidacion" && <LiquidacionTab emp={emp} liq={liq} updateLiq={updateLiq} calc={calc} onGenerarPDF={onGenerarPDF} />}
+                                    {tab === "vista" && <VistaPreviaTab empresa={empresa} emp={emp} liq={liq} calc={calc} />}
+                                </React.Fragment>
+                            )}
+                        </div>
+                    </div>
+                    <div className="footer-note">
+                        Los datos se guardan solo en esta sesión del navegador. Usá "Exportar JSON" para conservarlos
+                        y "Importar JSON" para recuperarlos más adelante.
+                        <div style={{ marginTop: 8, display: "flex", gap: 10, justifyContent: "center" }}>
+                            <button className="btn btn-ghost btn-sm" onClick={exportarJSON}>⇩ Exportar datos (JSON)</button>
+                            <button className="btn btn-ghost btn-sm" onClick={() => fileInputRef.current.click()}>⇧ Importar datos (JSON)</button>
+                            <input type="file" accept="application/json" ref={fileInputRef} style={{ display: "none" }} onChange={importarJSON} />
+                        </div>
+                    </div>
+                    {toast && <div className="toast">{toast}</div>}
+                </div>
+            );
+        }
+
+        ReactDOM.createRoot(document.getElementById("root")).render(<App />);
+    </script>
+</body>
+
+</html>
