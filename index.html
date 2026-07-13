@@ -973,6 +973,42 @@
             };
         }
 
+        /* ===================== Cálculo de Aguinaldo (S.A.C.) ===================== */
+
+        // El S.A.C. equivale al 50% de la mejor remuneración mensual del semestre
+        // (Ley 23.041). Se toma como base la liquidación actualmente cargada
+        // (remunerativo + no remunerativo), con opción de excluir las horas extra
+        // de esa base ya que suelen no ser "habituales". Las deducciones se
+        // calculan con el mismo criterio que en el sueldo: jubilación y Ley
+        // 19.032 solo sobre la porción remunerativa, obra social y sindical sobre
+        // el total (con el mismo ajuste por jornada reducida).
+        function calcularAguinaldo(emp, calc, incluirHorasExtra) {
+            const remunerativoBase = incluirHorasExtra
+                ? calc.totalRemunerativo
+                : calc.totalRemunerativo - calc.he50 - calc.he100;
+            const noRemunerativoBase = calc.noRemunerativo;
+            const baseTotal = remunerativoBase + noRemunerativoBase;
+
+            const sacRemun = remunerativoBase * 0.5;
+            const sacNoRemun = noRemunerativoBase * 0.5;
+            const sacBruto = sacRemun + sacNoRemun;
+
+            const jubilacion = sacRemun * 0.11;
+            const ley19032 = sacRemun * 0.03;
+            const baseAportes = sacRemun + sacNoRemun;
+            const factorJornada = calc.fraccion > 0 ? (1 / calc.fraccion) : 1;
+            const obraSocial = baseAportes * factorJornada * 0.03;
+            const sindical = emp.afiliadoSindicato ? baseAportes * 0.045 : 0;
+            const totalDeducciones = jubilacion + ley19032 + obraSocial + sindical;
+            const neto = sacBruto - totalDeducciones;
+
+            return {
+                incluirHorasExtra, remunerativoBase, noRemunerativoBase, baseTotal,
+                sacRemun, sacNoRemun, sacBruto,
+                jubilacion, ley19032, obraSocial, sindical, totalDeducciones, neto
+            };
+        }
+
         /* ===================== Payload para Webhook (Make → Google Sheets) ===================== */
 
         function construirPayloadEmpleado(empresa, emp, liq, calc) {
@@ -1209,6 +1245,175 @@
                 if (!periodoRef) periodoRef = liq.periodo;
             });
             const nombreArchivo = `Recibos_${(empresa.razonSocial || "empresa").replace(/\s+/g, "_")}_${periodoRef || "periodo"}.pdf`;
+            doc.save(nombreArchivo);
+        }
+
+        // Dibuja la página de un recibo de S.A.C. (aguinaldo), con el mismo
+        // esquema de bloque ORIGINAL + DUPLICADO que el recibo de sueldo.
+        function dibujarPaginaAguinaldo(doc, empresa, emp, liq, calc, aguinaldo) {
+            const W = 210;
+            const BLOCK_H = 136;
+            const TOP_MARGIN = 8;
+            const GAP = 10;
+            const y1 = TOP_MARGIN;
+            const y2 = y1 + BLOCK_H + GAP;
+
+            const [anioP, mesP] = (liq.periodo || "").split("-").map(x => parseInt(x, 10));
+            const semestreLabel = mesP ? `${mesP <= 6 ? "1°" : "2°"} semestre ${anioP}` : "-";
+
+            function bloque(y, tag) {
+                const left = 14, right = W - 14;
+                const bottom = y + BLOCK_H;
+                doc.setDrawColor(20, 20, 20);
+                doc.setLineWidth(0.4);
+                doc.rect(left, y, right - left, BLOCK_H);
+
+                doc.setFont("times", "bold"); doc.setFontSize(12);
+                doc.text(empresa.razonSocial || "[Razón Social]", left + 4, y + 8);
+                doc.setFont("helvetica", "normal"); doc.setFontSize(8);
+                doc.text(`CUIT: ${empresa.cuit || "-"}   Domicilio: ${empresa.domicilio || "-"}`, left + 4, y + 13);
+                doc.text(`Actividad: ${empresa.actividad || "Comercio"}`, left + 4, y + 17);
+
+                doc.setFont("helvetica", "bold"); doc.setFontSize(10);
+                doc.text("RECIBO DE S.A.C. (AGUINALDO)", right - 4, y + 8, { align: "right" });
+                doc.setFont("helvetica", "normal"); doc.setFontSize(8);
+                doc.text("Ley 23.041 — Art. 121/123 LCT", right - 4, y + 12, { align: "right" });
+                doc.setDrawColor(13, 115, 119); doc.setLineWidth(0.6);
+                doc.rect(right - 24, y + 15, 20, 5.5);
+                doc.setFont("helvetica", "bold"); doc.setFontSize(7.5);
+                doc.text(tag, right - 14, y + 19, { align: "center" });
+
+                doc.setDrawColor(20, 20, 20); doc.setLineWidth(0.2);
+                doc.line(left, y + 21, right, y + 21);
+
+                doc.setFont("helvetica", "normal"); doc.setFontSize(8.5);
+                let ly = y + 27;
+                const col1 = left + 4, col2 = left + 95;
+                doc.text(`Apellido y Nombre: ${emp.nombre || "-"}`, col1, ly);
+                doc.text(`Semestre: ${semestreLabel}`, col2, ly);
+                ly += 5;
+                doc.text(`CUIL: ${emp.cuil || "-"}`, col1, ly);
+                doc.text(`Fecha de pago: ${liq.fechaPago || "-"}`, col2, ly);
+                ly += 5;
+                doc.text(`Legajo: ${emp.legajo || "-"}`, col1, ly);
+                doc.text(`Fecha de ingreso: ${emp.fechaIngreso || "-"}`, col2, ly);
+                ly += 5;
+                doc.text(`Categoría: ${emp.categoria || "-"} · ${JORNADA_LABEL_CORTO[calc.jornada] || "-"}`, col1, ly);
+                doc.text(`Base tomada: ${liq.periodoLabel || liq.periodo || "-"}`, col2, ly);
+
+                ly += 4;
+                doc.line(left, ly, right, ly);
+                ly += 5;
+
+                const xRemun = left + 120;
+                const xNoRemun = left + 152;
+                const xDeduc = right - 4;
+
+                doc.setFont("helvetica", "bold"); doc.setFontSize(7);
+                doc.text("CONCEPTO", col1, ly);
+                doc.text("REMUNERATIVO", xRemun, ly, { align: "right" });
+                doc.text("NO REMUNER.", xNoRemun, ly, { align: "right" });
+                doc.text("DEDUCCIÓN", xDeduc, ly, { align: "right" });
+                ly += 2;
+                doc.setDrawColor(20, 20, 20); doc.setLineWidth(0.2);
+                doc.line(col1, ly, xDeduc, ly);
+                ly += 3.5;
+
+                doc.setFont("helvetica", "normal"); doc.setFontSize(7.5);
+                const filaTabla = (concepto, remun, norem, deduc) => {
+                    const r = remun || 0, n = norem || 0, d = deduc || 0;
+                    if (Math.abs(r) < 0.005 && Math.abs(n) < 0.005 && Math.abs(d) < 0.005) return;
+                    doc.text(concepto, col1, ly);
+                    if (Math.abs(r) >= 0.005) doc.text("$ " + fmt(r), xRemun, ly, { align: "right" });
+                    if (Math.abs(n) >= 0.005) doc.text("$ " + fmt(n), xNoRemun, ly, { align: "right" });
+                    if (Math.abs(d) >= 0.005) doc.text("$ " + fmt(d), xDeduc, ly, { align: "right" });
+                    ly += 4.3;
+                };
+
+                filaTabla("S.A.C.", aguinaldo.sacRemun, 0, 0);
+                filaTabla("S.A.C. s/no remunerativo", 0, aguinaldo.sacNoRemun, 0);
+                filaTabla("Jubilación (Ley 24.241) 11%", 0, 0, aguinaldo.jubilacion);
+                filaTabla("Ley 19.032 (INSSJP/PAMI) 3%", 0, 0, aguinaldo.ley19032);
+                filaTabla("Obra social 3%", 0, 0, aguinaldo.obraSocial);
+                filaTabla("Cuota sindical FAECyS 4,5%", 0, 0, aguinaldo.sindical);
+
+                doc.setDrawColor(20, 20, 20); doc.setLineWidth(0.2);
+                doc.line(col1, ly - 1.5, xDeduc, ly - 1.5);
+                ly += 1;
+                doc.setFont("helvetica", "bold"); doc.setFontSize(7.5);
+                doc.text("TOTALES", col1, ly);
+                doc.text("$ " + fmt(aguinaldo.sacRemun), xRemun, ly, { align: "right" });
+                doc.text("$ " + fmt(aguinaldo.sacNoRemun), xNoRemun, ly, { align: "right" });
+                doc.text("$ " + fmt(aguinaldo.totalDeducciones), xDeduc, ly, { align: "right" });
+                ly += 5.5;
+
+                const netoMinY = ly;
+                const netoMaxY = bottom - 28;
+                const netoY = Math.min(netoMinY, netoMaxY);
+
+                doc.setDrawColor(20, 20, 20);
+                doc.rect(left, netoY, right - left, 8);
+                doc.setTextColor(0, 0, 0);
+                doc.setFont("helvetica", "bold"); doc.setFontSize(9.5);
+                doc.text("NETO A COBRAR", left + 4, netoY + 5.5);
+                doc.text("$ " + fmt(aguinaldo.neto), right - 4, netoY + 5.5, { align: "right" });
+                doc.setTextColor(20, 20, 20);
+                doc.setFont("helvetica", "italic"); doc.setFontSize(7);
+                doc.text("Son: " + pesosEnLetras(aguinaldo.neto), left + 4, netoY + 11.5);
+
+                doc.setFont("helvetica", "normal"); doc.setFontSize(6.3);
+                doc.setTextColor(120, 120, 120);
+                const legalTexto = "Art. 121, 122 y 123 - Ley de Contrato de Trabajo N\u00b0 20.744 y Ley 23.041. El S.A.C. equivale al 50% de la mayor remuneraci\u00f3n mensual devengada en el semestre. " +
+                    (aguinaldo.incluirHorasExtra ? "La base incluye horas extra." : "La base no incluye horas extra.");
+                const legalLineas = doc.splitTextToSize(legalTexto, ((right - left) / 2) - 4);
+                doc.text(legalLineas, left + 4, netoY + 15.5);
+                doc.setTextColor(20, 20, 20);
+
+                doc.setDrawColor(20, 20, 20); doc.setLineWidth(0.2);
+                doc.setFont("helvetica", "normal");
+                doc.setFontSize(6.5);
+
+                if (tag === "ORIGINAL") {
+                    doc.line(right - 70, y + BLOCK_H - 4, right - 4, y + BLOCK_H - 4);
+                    doc.text("Firma y aclaración del empleador", right - 37, y + BLOCK_H - 1.5, { align: "center" });
+                } else {
+                    doc.line(right - 70, y + BLOCK_H - 4, right - 4, y + BLOCK_H - 4);
+                    doc.text("Recibí conforme — Firma del empleado", right - 37, y + BLOCK_H - 1.5, { align: "center" });
+                }
+            }
+
+            bloque(y1, "ORIGINAL");
+            doc.setLineDashPattern([1.2, 1.2], 0);
+            doc.setDrawColor(140, 132, 113);
+            doc.line(14, y1 + BLOCK_H + GAP / 2, W - 14, y1 + BLOCK_H + GAP / 2);
+            doc.setLineDashPattern([], 0);
+            bloque(y2, "DUPLICADO");
+        }
+
+        function generarPDFAguinaldo(empresa, emp, liq, calc, aguinaldo) {
+            const { jsPDF } = window.jspdf;
+            const doc = new jsPDF({ unit: "mm", format: "a4" });
+            dibujarPaginaAguinaldo(doc, empresa, emp, liq, calc, aguinaldo);
+            const nombreArchivo = `Aguinaldo_${(emp.nombre || "empleado").replace(/\s+/g, "_")}_${liq.periodo || "periodo"}.pdf`;
+            doc.save(nombreArchivo);
+        }
+
+        // PDF con el aguinaldo de todos los empleados cargados, uno por página,
+        // en un solo archivo (igual criterio que generarPDFTodos: no omite a
+        // nadie, aunque le falten datos).
+        function generarPDFAguinaldoTodos(empresa, empleadosConLiq, escalaGeneral) {
+            const { jsPDF } = window.jspdf;
+            const doc = new jsPDF({ unit: "mm", format: "a4" });
+            let periodoRef = "";
+            empleadosConLiq.forEach((item, idx) => {
+                const { emp, liq } = item;
+                const calc = calcularLiquidacion(emp, liq, escalaGeneral);
+                const aguinaldo = calcularAguinaldo(emp, calc, !!liq.aguinaldoIncluirHorasExtra);
+                if (idx > 0) doc.addPage();
+                dibujarPaginaAguinaldo(doc, empresa, emp, liq, calc, aguinaldo);
+                if (!periodoRef) periodoRef = liq.periodo;
+            });
+            const nombreArchivo = `Aguinaldos_${(empresa.razonSocial || "empresa").replace(/\s+/g, "_")}_${periodoRef || "periodo"}.pdf`;
             doc.save(nombreArchivo);
         }
 
@@ -1484,8 +1689,9 @@
             );
         }
 
-        function LiquidacionTab({ emp, liq, updateLiq, calc, onGenerarPDF }) {
+        function LiquidacionTab({ emp, liq, updateLiq, calc, onGenerarPDF, onGenerarPDFAguinaldo }) {
             const usarEscala = liq.usarEscalaGeneral !== false;
+            const aguinaldo = calcularAguinaldo(emp, calc, !!liq.aguinaldoIncluirHorasExtra);
             return (
                 <React.Fragment>
                     <div className="card">
@@ -1602,13 +1808,13 @@
                             <tbody>
                                 <tr><td className="calc-section-title" colSpan="2">Remunerativo</td></tr>
                                 <tr><td className="label">Sueldo básico</td><td className="amount">$ {fmt(calc.basico)}</td></tr>
-                                <tr><td className="label">Antigüedad ({calc.antigPct.toFixed(1)}% — {calc.aniosAntig} año/s)</td><td className="amount">$ {fmt(calc.antigMonto)}</td></tr>
+                                <tr><td className="label">Antigüedad</td><td className="amount">$ {fmt(calc.antigMonto)}</td></tr>
                                 <tr><td className="label">Presentismo</td><td className="amount">$ {fmt(calc.presentismoMonto)}</td></tr>
                                 <tr><td className="label">Horas extra 50%</td><td className="amount">$ {fmt(calc.he50)}</td></tr>
                                 <tr><td className="label">Horas extra 100%</td><td className="amount">$ {fmt(calc.he100)}</td></tr>
                                 <tr><td className="label">Otras remuneraciones</td><td className="amount">$ {fmt(calc.otrosRemun)}</td></tr>
                                 <tr><td className="label">Asignación no remunerativa</td><td className="amount">$ {fmt(calc.noRemunerativoBase)}</td></tr>
-                                <tr><td className="label">Antigüedad s/no remunerativo ({calc.antigPct.toFixed(1)}%)</td><td className="amount">$ {fmt(calc.antigNoRemunMonto)}</td></tr>
+                                <tr><td className="label">Antigüedad s/no remunerativo</td><td className="amount">$ {fmt(calc.antigNoRemunMonto)}</td></tr>
                                 <tr><td className="label">Presentismo s/no remunerativo</td><td className="amount">$ {fmt(calc.presentismoNoRemunMonto)}</td></tr>
                                 <tr className="total"><td>Total bruto</td><td className="amount">$ {fmt(calc.totalBruto)}</td></tr>
 
@@ -1625,6 +1831,40 @@
                         </table>
                         <div className="actions-row">
                             <button className="btn btn-primary" onClick={onGenerarPDF}>Confirmar y emitir PDF</button>
+                        </div>
+                    </div>
+
+                    <div className="card">
+                        <h3>Aguinaldo (S.A.C.)</h3>
+                        <div className="field checkbox" style={{ marginBottom: 14 }}>
+                            <input type="checkbox" id="aguinaldoHE" checked={!!liq.aguinaldoIncluirHorasExtra}
+                                onChange={e => updateLiq({ aguinaldoIncluirHorasExtra: e.target.checked })} />
+                            <label htmlFor="aguinaldoHE">Incluir horas extra en la base del aguinaldo</label>
+                        </div>
+                        <table className="calc-table">
+                            <tbody>
+                                <tr>
+                                    <td className="label">Base remunerativo {liq.aguinaldoIncluirHorasExtra ? "(con horas extra)" : "(sin horas extra)"}</td>
+                                    <td className="amount">$ {fmt(aguinaldo.remunerativoBase)}</td>
+                                </tr>
+                                <tr><td className="label">Base no remunerativo</td><td className="amount">$ {fmt(aguinaldo.noRemunerativoBase)}</td></tr>
+                                <tr className="total"><td>Base total</td><td className="amount">$ {fmt(aguinaldo.baseTotal)}</td></tr>
+                                <tr><td className="label">S.A.C. bruto</td><td className="amount">$ {fmt(aguinaldo.sacBruto)}</td></tr>
+                                <tr><td className="label">Jubilación 11%</td><td className="amount">$ {fmt(aguinaldo.jubilacion)}</td></tr>
+                                <tr><td className="label">Ley 19.032 3%</td><td className="amount">$ {fmt(aguinaldo.ley19032)}</td></tr>
+                                <tr><td className="label">Obra social 3%</td><td className="amount">$ {fmt(aguinaldo.obraSocial)}</td></tr>
+                                <tr><td className="label">Cuota sindical 4,5%</td><td className="amount">$ {fmt(aguinaldo.sindical)}</td></tr>
+                                <tr className="total"><td>NETO AGUINALDO</td><td className="amount">$ {fmt(aguinaldo.neto)}</td></tr>
+                            </tbody>
+                        </table>
+                        <div className="hint">
+                            La base toma la liquidación cargada arriba (remunerativo + no remunerativo),
+                            asumiendo que representa la mejor remuneración del semestre (Ley 23.041). Si el
+                            sueldo varió durante el semestre, cargá la liquidación del mes de mayor
+                            remuneración antes de emitir el aguinaldo.
+                        </div>
+                        <div className="actions-row">
+                            <button className="btn btn-primary" onClick={() => onGenerarPDFAguinaldo(aguinaldo)}>Emitir PDF de Aguinaldo</button>
                         </div>
                     </div>
                 </React.Fragment>
@@ -1741,6 +1981,7 @@
                 presentismo: false,
                 noRemunerativos: "", noRemunerativosConcepto: "",
                 otrasDeducciones: "", otrasDeduccionesConcepto: "",
+                aguinaldoIncluirHorasExtra: false,
             };
         }
 
@@ -1814,6 +2055,15 @@
                 mostrarToast("Recibo generado y descargado ✓");
             }
 
+            function onGenerarPDFAguinaldo(aguinaldo) {
+                if (!emp.nombre || !liq.periodo) {
+                    mostrarToast("Completá al menos nombre y período antes de emitir el aguinaldo.");
+                    return;
+                }
+                generarPDFAguinaldo(empresa, emp, liq, calc, aguinaldo);
+                mostrarToast("PDF de aguinaldo generado y descargado ✓");
+            }
+
             function onGenerarTodosPDF() {
                 if (empleados.length === 0) {
                     mostrarToast("Todavía no cargaste ningún empleado.");
@@ -1825,6 +2075,19 @@
                 }));
                 generarPDFTodos(empresa, empleadosConLiq, escalaGeneral);
                 mostrarToast(`PDF con ${empleadosConLiq.length} recibo(s) generado ✓`);
+            }
+
+            function onGenerarTodosAguinaldoPDF() {
+                if (empleados.length === 0) {
+                    mostrarToast("Todavía no cargaste ningún empleado.");
+                    return;
+                }
+                const empleadosConLiq = empleados.map(e => ({
+                    emp: e,
+                    liq: liqPorEmpleado[e.id] || defaultLiq()
+                }));
+                generarPDFAguinaldoTodos(empresa, empleadosConLiq, escalaGeneral);
+                mostrarToast(`PDF de aguinaldos con ${empleadosConLiq.length} empleado(s) generado ✓`);
             }
 
             async function onProbarWebhook() {
@@ -1939,7 +2202,7 @@
                                         <div className={"tab" + (tab === "vista" ? " active" : "")} onClick={() => setTab("vista")}>Vista previa del recibo</div>
                                     </div>
                                     {tab === "datos" && <DatosTab emp={emp} updateEmp={updateEmp} />}
-                                    {tab === "liquidacion" && <LiquidacionTab emp={emp} liq={liq} updateLiq={updateLiq} calc={calc} onGenerarPDF={onGenerarPDF} />}
+                                    {tab === "liquidacion" && <LiquidacionTab emp={emp} liq={liq} updateLiq={updateLiq} calc={calc} onGenerarPDF={onGenerarPDF} onGenerarPDFAguinaldo={onGenerarPDFAguinaldo} />}
                                     {tab === "vista" && <VistaPreviaTab empresa={empresa} emp={emp} liq={liq} calc={calc} />}
                                 </React.Fragment>
                             )}
@@ -1950,6 +2213,7 @@
                         y "Importar JSON" para recuperarlos más adelante.
                         <div style={{ marginTop: 8, display: "flex", gap: 10, justifyContent: "center", flexWrap: "wrap" }}>
                             <button className="btn btn-primary btn-sm" onClick={onGenerarTodosPDF}>⬇ Descargar todos los recibos (PDF)</button>
+                            <button className="btn btn-primary btn-sm" onClick={onGenerarTodosAguinaldoPDF}>🎁 Descargar todos los aguinaldos (PDF)</button>
                             <button className="btn btn-ghost btn-sm" onClick={exportarJSON}>⇩ Exportar datos (JSON)</button>
                             <button className="btn btn-ghost btn-sm" onClick={() => fileInputRef.current.click()}>⇧ Importar datos (JSON)</button>
                             <input type="file" accept="application/json" ref={fileInputRef} style={{ display: "none" }} onChange={importarJSON} />
