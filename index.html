@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="es">
 
@@ -832,6 +831,7 @@
                 basicos,
                 noRemunerativo: "",
                 noRemunerativoConcepto: "Asignación no remunerativa (paritaria)",
+                contribucionesPatronalesPct: "",
             };
         }
 
@@ -963,13 +963,22 @@
             const totalBruto = totalRemunerativo + noRemunerativo;
             const neto = totalBruto - totalDeducciones;
 
+            // Contribuciones a cargo del empleador — puramente informativas, NO
+            // se descuentan del neto del empleado. Se calculan sobre la
+            // remuneración real (sin el "regrosamiento" por jornada reducida que
+            // sí aplica al aporte mínimo de obra social). La alícuota es la que
+            // el usuario cargue en la Escala salarial general, según su régimen
+            // vigente (Decreto 814/2001, ART, etc.).
+            const contribPatronalesPct = parseFloat(escalaGeneral.contribucionesPatronalesPct) || 0;
+            const contribucionesPatronales = (totalRemunerativo + noRemunerativo) * contribPatronalesPct / 100;
+
             return {
                 jornada, fraccion, usarEscala, basico, basicoEscala, noRemEscala,
                 aniosAntig, antigPct, antigMonto, valorHora, he50, he100, otrosRemun,
                 presentismoMonto, totalRemunerativo,
                 noRemunerativoBase, antigNoRemunMonto, presentismoNoRemunMonto, noRemunerativo,
                 jubilacion, ley19032, obraSocial, sindical, otrasDeducciones, totalDeducciones,
-                totalBruto, neto
+                totalBruto, neto, contribPatronalesPct, contribucionesPatronales
             };
         }
 
@@ -1002,10 +1011,17 @@
             const totalDeducciones = jubilacion + ley19032 + obraSocial + sindical;
             const neto = sacBruto - totalDeducciones;
 
+            // Contribuciones patronales sobre el aguinaldo (mismo criterio que en
+            // el sueldo: informativo, no descuenta del neto, sin el regrosamiento
+            // por jornada reducida).
+            const contribPatronalesPct = calc.contribPatronalesPct || 0;
+            const contribucionesPatronales = baseAportes * contribPatronalesPct / 100;
+
             return {
                 incluirHorasExtra, remunerativoBase, noRemunerativoBase, baseTotal,
                 sacRemun, sacNoRemun, sacBruto,
-                jubilacion, ley19032, obraSocial, sindical, totalDeducciones, neto
+                jubilacion, ley19032, obraSocial, sindical, totalDeducciones, neto,
+                contribPatronalesPct, contribucionesPatronales
             };
         }
 
@@ -1048,6 +1064,8 @@
                 total_deducciones: n(calc.totalDeducciones),
                 total_bruto: n(calc.totalBruto),
                 neto_a_cobrar: n(calc.neto),
+                contribuciones_patronales_pct: n(calc.contribPatronalesPct),
+                contribuciones_patronales_monto: n(calc.contribucionesPatronales),
             };
         }
 
@@ -1167,36 +1185,80 @@
 
                 doc.setDrawColor(20, 20, 20); doc.setLineWidth(0.2);
                 doc.line(col1, ly - 1.5, xDeduc, ly - 1.5);
-                ly += 1;
-                doc.setFont("helvetica", "bold"); doc.setFontSize(7.5);
+                // -------------------- TOTALES --------------------
+                doc.setDrawColor(20, 20, 20);
+                doc.setLineWidth(0.2);
+                doc.line(col1, ly - 1.5, xDeduc, ly - 1.5);
+
+                ly += 2;
+
+                doc.setFont("helvetica", "bold");
+                doc.setFontSize(7.5);
+
                 doc.text("TOTALES", col1, ly);
                 doc.text("$ " + fmt(calc.totalRemunerativo), xRemun, ly, { align: "right" });
                 doc.text("$ " + fmt(calc.noRemunerativo), xNoRemun, ly, { align: "right" });
                 doc.text("$ " + fmt(calc.totalDeducciones), xDeduc, ly, { align: "right" });
-                ly += 5.5;
 
-                // Neto — pegado justo debajo de las deducciones, sin espacio muerto,
-                // pero sin invadir la zona reservada para las firmas al pie del bloque.
-                const netoMinY = ly;
-                const netoMaxY = bottom - 28; // deja lugar fijo para el texto "Son:", el texto legal y la firma
-                const netoY = Math.min(netoMinY, netoMaxY);
+
+                // -------------------- NETO --------------------
+                ly += 6;
 
                 doc.setDrawColor(20, 20, 20);
-                doc.rect(left, netoY, right - left, 8);
-                doc.setTextColor(0, 0, 0);
-                doc.setFont("helvetica", "bold"); doc.setFontSize(9.5);
-                doc.text("NETO A COBRAR", left + 4, netoY + 5.5);
-                doc.text("$ " + fmt(calc.neto), right - 4, netoY + 5.5, { align: "right" });
-                doc.setTextColor(20, 20, 20);
-                doc.setFont("helvetica", "italic"); doc.setFontSize(7);
-                doc.text("Son: " + pesosEnLetras(calc.neto), left + 4, netoY + 11.5);
+                doc.rect(left, ly, right - left, 8);
 
-                // Texto legal — pegado justo debajo de "Son: ... pesos"
-                doc.setFont("helvetica", "normal"); doc.setFontSize(6.3);
+                doc.setFont("helvetica", "bold");
+                doc.setFontSize(9.5);
+
+                doc.text("NETO A COBRAR", left + 4, ly + 5.5);
+                doc.text("$ " + fmt(calc.neto), right - 4, ly + 5.5, { align: "right" });
+
+
+                // -------------------- SON --------------------
+                ly += 12;
+
+                doc.setFont("helvetica", "italic");
+                doc.setFontSize(7);
+
+                doc.text("Son: " + pesosEnLetras(calc.neto), left + 4, ly);
+
+
+                // -------------------- CONTRIBUCIONES --------------------
+                if (calc.contribucionesPatronales > 0) {
+
+                    ly += 4;
+
+                    doc.setFont("helvetica", "italic");
+                    doc.setFontSize(6.3);
+                    doc.setTextColor(120, 120, 120);
+
+                    doc.text(
+                        `Contribuciones patronales a cargo del empleador (informativo): $ ${fmt(calc.contribucionesPatronales)}`,
+                        left + 4,
+                        ly
+                    );
+
+                    doc.setTextColor(20, 20, 20);
+                }
+
+
+                // -------------------- TEXTO LEGAL --------------------
+                ly += 4;
+
+                doc.setFont("helvetica", "normal");
+                doc.setFontSize(6.3);
                 doc.setTextColor(120, 120, 120);
-                const legalTexto = "Art. 138, 139 y 140 - Ley de Contrato de Trabajo N\u00b0 20.744. Este comprobante detalla la totalidad de las remuneraciones y descuentos correspondientes al per\u00edodo indicado.";
-                const legalLineas = doc.splitTextToSize(legalTexto, ((right - left) / 2) - 4);
-                doc.text(legalLineas, left + 4, netoY + 15.5);
+
+                const legalTexto =
+                    "Art. 138, 139 y 140 - Ley de Contrato de Trabajo Nº 20.744. Este comprobante detalla la totalidad de las remuneraciones y descuentos correspondientes al período indicado.";
+
+                const legalLineas = doc.splitTextToSize(
+                    legalTexto,
+                    ((right - left) / 2) - 4
+                );
+
+                doc.text(legalLineas, left + 4, ly);
+
                 doc.setTextColor(20, 20, 20);
 
                 // firmas — siempre ancladas al pie del bloque
@@ -1348,7 +1410,7 @@
                 ly += 5.5;
 
                 const netoMinY = ly;
-                const netoMaxY = bottom - 28;
+                const netoMaxY = bottom - (aguinaldo.contribucionesPatronales > 0 ? 32 : 28);
                 const netoY = Math.min(netoMinY, netoMaxY);
 
                 doc.setDrawColor(20, 20, 20);
@@ -1361,12 +1423,22 @@
                 doc.setFont("helvetica", "italic"); doc.setFontSize(7);
                 doc.text("Son: " + pesosEnLetras(aguinaldo.neto), left + 4, netoY + 11.5);
 
+                // Contribuciones patronales — entre "Son:" y el texto legal
+                let legalOffsetY = 15.5;
+                if (aguinaldo.contribucionesPatronales > 0) {
+                    doc.setFont("helvetica", "italic"); doc.setFontSize(6.3);
+                    doc.setTextColor(120, 120, 120);
+                    doc.text(`Contribuciones patronales a cargo del empleador (${aguinaldo.contribPatronalesPct}%, informativo): $ ${fmt(aguinaldo.contribucionesPatronales)}`, left + 4, netoY + 15);
+                    doc.setTextColor(20, 20, 20);
+                    legalOffsetY = 18.5;
+                }
+
                 doc.setFont("helvetica", "normal"); doc.setFontSize(6.3);
                 doc.setTextColor(120, 120, 120);
                 const legalTexto = "Art. 121, 122 y 123 - Ley de Contrato de Trabajo N\u00b0 20.744 y Ley 23.041. El S.A.C. equivale al 50% de la mayor remuneraci\u00f3n mensual devengada en el semestre. " +
                     (aguinaldo.incluirHorasExtra ? "La base incluye horas extra." : "La base no incluye horas extra.");
                 const legalLineas = doc.splitTextToSize(legalTexto, ((right - left) / 2) - 4);
-                doc.text(legalLineas, left + 4, netoY + 15.5);
+                doc.text(legalLineas, left + 4, netoY + legalOffsetY);
                 doc.setTextColor(20, 20, 20);
 
                 doc.setDrawColor(20, 20, 20); doc.setLineWidth(0.2);
@@ -1459,7 +1531,7 @@
                         ⚙ Escala salarial general
                     </button>
                     <button className={"sidebar-scale-btn" + (vista === "webhook" ? " active" : "")} onClick={onVerWebhook}>
-                        🔗 Exportar Web
+                        🔗 Exportar por Webhook (Make)
                     </button>
                     <h2>Empleados ({empleados.length})</h2>
                     <button className="btn btn-primary btn-block" onClick={onNuevo} style={{ marginBottom: 14 }}>
@@ -1554,6 +1626,24 @@
                             (100% jornada completa, 75% tres cuartos, 50% media jornada).
                         </div>
                     </div>
+                    <div className="card">
+                        <h3>Contribuciones patronales (informativo)</h3>
+                        <div className="field" style={{ maxWidth: 220 }}>
+                            <label>% contribuciones a cargo del empleador</label>
+                            <input type="number" step="0.01" placeholder="Ej. 26,40"
+                                value={escalaGeneral.contribucionesPatronalesPct}
+                                onChange={e => updateEscalaGeneral({ contribucionesPatronalesPct: e.target.value })} />
+                        </div>
+                        <div className="hint">
+                            Este porcentaje es solo para mostrar, a título informativo, el costo laboral total
+                            en el recibo — <strong>no se descuenta del sueldo ni afecta el neto a cobrar del
+                                empleado</strong>. Corresponde a los aportes que hace la empresa (jubilación
+                            patronal, obra social, ART, asignaciones familiares, fondo de desempleo, etc.), que
+                            varían según el régimen de contribuciones vigente (Decreto 814/2001) y la actividad.
+                            Confirmá la alícuota exacta que te corresponde con tu contador antes de usarla; si
+                            lo dejás vacío, el recibo no muestra esta línea.
+                        </div>
+                    </div>
                     <div className="hint" style={{ padding: "0 4px" }}>
                         En la pestaña "Liquidación" de cada empleado podés desactivar la escala general para
                         ese período puntual y cargar un básico o no remunerativo manual (por ejemplo, ante un
@@ -1606,7 +1696,8 @@
                             no_remunerativo_base, no_remunerativo_antiguedad, no_remunerativo_presentismo,
                             no_remunerativo_total, jubilacion, ley_19032, obra_social, cuota_sindical,
                             otras_deducciones_concepto, otras_deducciones_monto, total_remunerativo,
-                            total_deducciones, total_bruto, neto_a_cobrar.
+                            total_deducciones, total_bruto, neto_a_cobrar, contribuciones_patronales_pct,
+                            contribuciones_patronales_monto.
                         </div>
                     </div>
 
@@ -1829,6 +1920,13 @@
                                 <tr className="total"><td>NETO A COBRAR</td><td className="amount">$ {fmt(calc.neto)}</td></tr>
                             </tbody>
                         </table>
+                        {calc.contribucionesPatronales > 0 && (
+                            <div className="hint" style={{ marginTop: 10 }}>
+                                <strong>Contribuciones patronales ({calc.contribPatronalesPct}%, informativo):</strong>{" "}
+                                $ {fmt(calc.contribucionesPatronales)} — a cargo del empleador, no descuenta del
+                                neto de arriba.
+                            </div>
+                        )}
                         <div className="actions-row">
                             <button className="btn btn-primary" onClick={onGenerarPDF}>Confirmar y emitir PDF</button>
                         </div>
@@ -1857,6 +1955,13 @@
                                 <tr className="total"><td>NETO AGUINALDO</td><td className="amount">$ {fmt(aguinaldo.neto)}</td></tr>
                             </tbody>
                         </table>
+                        {aguinaldo.contribucionesPatronales > 0 && (
+                            <div className="hint" style={{ marginTop: 10 }}>
+                                <strong>Contribuciones patronales ({aguinaldo.contribPatronalesPct}%, informativo):</strong>{" "}
+                                $ {fmt(aguinaldo.contribucionesPatronales)} — a cargo del empleador, no descuenta
+                                del neto de arriba.
+                            </div>
+                        )}
                         <div className="hint">
                             La base toma la liquidación cargada arriba (remunerativo + no remunerativo),
                             asumiendo que representa la mejor remuneración del semestre (Ley 23.041). Si el
@@ -1943,6 +2048,11 @@
                             <div className="val">$ {fmt(calc.neto)}</div>
                         </div>
                         <div className="en-letras">Son: {pesosEnLetras(calc.neto)}</div>
+                        {calc.contribucionesPatronales > 0 && (
+                            <div className="en-letras" style={{ fontStyle: "normal", color: "#777" }}>
+                                Contribuciones patronales ({calc.contribPatronalesPct}%, informativo — no incluidas en el neto): $ {fmt(calc.contribucionesPatronales)}
+                            </div>
+                        )}
                         <div className="legal">
                             Art. 138, 139 y 140 — Ley de Contrato de Trabajo N° 20.744. Este comprobante detalla la totalidad de las remuneraciones
                             y descuentos correspondientes al período indicado.
