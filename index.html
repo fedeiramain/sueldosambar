@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="es">
 
@@ -918,9 +919,17 @@
             const he50 = (parseFloat(liq.horasExtra50) || 0) * valorHora * 1.5;
             const he100 = (parseFloat(liq.horasExtra100) || 0) * valorHora * 2;
 
+            // Plus vacacional (Art. 155 LCT): se carga solo la cantidad de días
+            // de vacaciones y el monto se calcula solo, igual que las horas
+            // extra (básico ÷ 25 × días), sin necesidad de tipear el importe.
+            const valorDiaVacaciones = basico > 0 ? basico / 25 : 0;
+            const valorDia = basico > 0 ? basico / 25 : 0;
+            const diasVacaciones = parseFloat(liq.diasVacaciones) || 0;
+            const plusVacacional = diasVacaciones * valorDiaVacaciones - valorDia * diasVacaciones; // se descuenta el básico de esos días
+
             const otrosRemun = parseFloat(liq.otrosRemunerativos) || 0;
 
-            const brutoParaPresentismo = basico + antigMonto + he50 + he100 + otrosRemun;
+            const brutoParaPresentismo = basico + antigMonto + he50 + he100 + plusVacacional + otrosRemun;
             const presentismoMonto = liq.presentismo ? brutoParaPresentismo * 0.0833 : 0;
 
             const totalRemunerativo = brutoParaPresentismo + presentismoMonto;
@@ -974,7 +983,8 @@
 
             return {
                 jornada, fraccion, usarEscala, basico, basicoEscala, noRemEscala,
-                aniosAntig, antigPct, antigMonto, valorHora, he50, he100, otrosRemun,
+                aniosAntig, antigPct, antigMonto, valorHora, he50, he100,
+                valorDiaVacaciones, diasVacaciones, plusVacacional, otrosRemun,
                 presentismoMonto, totalRemunerativo,
                 noRemunerativoBase, antigNoRemunMonto, presentismoNoRemunMonto, noRemunerativo,
                 jubilacion, ley19032, obraSocial, sindical, otrasDeducciones, totalDeducciones,
@@ -992,9 +1002,12 @@
         // 19.032 solo sobre la porción remunerativa, obra social y sindical sobre
         // el total (con el mismo ajuste por jornada reducida).
         function calcularAguinaldo(emp, calc, incluirHorasExtra) {
-            const remunerativoBase = incluirHorasExtra
+            // El plus vacacional se excluye siempre de la base del aguinaldo: no
+            // es una remuneración habitual del mes sino un concepto puntual
+            // ligado a los días de vacaciones tomados en ese período.
+            const remunerativoBase = (incluirHorasExtra
                 ? calc.totalRemunerativo
-                : calc.totalRemunerativo - calc.he50 - calc.he100;
+                : calc.totalRemunerativo - calc.he50 - calc.he100) - (calc.plusVacacional || 0);
             const noRemunerativoBase = calc.noRemunerativo;
             const baseTotal = remunerativoBase + noRemunerativoBase;
 
@@ -1047,6 +1060,8 @@
                 presentismo_monto: n(calc.presentismoMonto),
                 horas_extra_50: n(calc.he50),
                 horas_extra_100: n(calc.he100),
+                plus_vacacional_dias: n(calc.diasVacaciones),
+                plus_vacacional_monto: n(calc.plusVacacional),
                 otras_remuneraciones_concepto: liq.otrosRemunerativosConcepto || "",
                 otras_remuneraciones_monto: n(calc.otrosRemun),
                 no_remunerativo_concepto: liq.noRemunerativosConcepto || "",
@@ -1123,21 +1138,22 @@
                 doc.setDrawColor(20, 20, 20); doc.setLineWidth(0.2);
                 doc.line(left, y + 21, right, y + 21);
 
-                // Datos empleado
+                // Datos empleado — 3 columnas (nombre/período/legajo,
+                // cuil/fecha pago/antigüedad, categoría/fecha ingreso) para
+                // liberar espacio vertical cuando hay muchos conceptos.
                 doc.setFont("helvetica", "normal"); doc.setFontSize(8.5);
                 let ly = y + 27;
-                const col1 = left + 4, col2 = left + 95;
+                const col1 = left + 4, col2 = left + 90, col3 = left + 148;
                 doc.text(`Apellido y Nombre: ${emp.nombre || "-"}`, col1, ly);
                 doc.text(`Período: ${liq.periodoLabel || "-"}`, col2, ly);
+                doc.text(`Legajo: ${emp.legajo || "-"}`, col3, ly);
                 ly += 5;
                 doc.text(`CUIL: ${emp.cuil || "-"}`, col1, ly);
                 doc.text(`Fecha de pago: ${liq.fechaPago || "-"}`, col2, ly);
-                ly += 5;
-                doc.text(`Legajo: ${emp.legajo || "-"}`, col1, ly);
-                doc.text(`Fecha de ingreso: ${emp.fechaIngreso || "-"}`, col2, ly);
+                doc.text(`Antig.: ${calc.aniosAntig} año(s)`, col3, ly);
                 ly += 5;
                 doc.text(`Categoría: ${emp.categoria || "-"} · ${JORNADA_LABEL_CORTO[calc.jornada] || "-"}`, col1, ly);
-                doc.text(`Antigüedad: ${calc.aniosAntig} año(s)`, col2, ly);
+                doc.text(`Fecha de ingreso: ${emp.fechaIngreso || "-"}`, col2, ly);
 
                 ly += 4;
                 doc.line(left, ly, right, ly);
@@ -1158,38 +1174,48 @@
                 doc.line(col1, ly, xDeduc, ly);
                 ly += 3.5;
 
-                doc.setFont("helvetica", "normal"); doc.setFontSize(7.3);
+                // Armamos primero la lista de conceptos con importe (filtrando
+                // los que están en cero) para saber cuántas filas va a tener la
+                // tabla, y así elegir la altura de fila y el tamaño de letra:
+                // con muchos conceptos cargados (horas extra + plus vacacional +
+                // otros) el recibo se compacta solo para que todo siga entrando
+                // dentro del bloque, sin tapar los totales ni el neto.
+                const conceptosTabla = [
+                    ["Sueldo básico", calc.basico, 0, 0],
+                    ["Antigüedad", calc.antigMonto, 0, 0],
+                    ["Presentismo", calc.presentismoMonto, 0, 0],
+                    ["Horas extra", (calc.he50 || 0) + (calc.he100 || 0), 0, 0],
+                    [`Plus vacacional (${calc.diasVacaciones || 0} día/s)`, calc.plusVacacional, 0, 0],
+                    [liq.otrosRemunerativosConcepto || "Otras remuneraciones", calc.otrosRemun, 0, 0],
+                    [liq.noRemunerativosConcepto || "Asignación no remunerativa", 0, calc.noRemunerativoBase, 0],
+                    ["Antigüedad s/no remunerativo", 0, calc.antigNoRemunMonto, 0],
+                    ["Presentismo s/no remunerativo", 0, calc.presentismoNoRemunMonto, 0],
+                    ["Jubilación (Ley 24.241) 11%", 0, 0, calc.jubilacion],
+                    ["Ley 19.032 (INSSJP/PAMI) 3%", 0, 0, calc.ley19032],
+                    ["Obra social 3%", 0, 0, calc.obraSocial],
+                    ["Cuota sindical FAECyS 4,5%", 0, 0, calc.sindical],
+                    [liq.otrasDeduccionesConcepto || "Otras deducciones", 0, 0, calc.otrasDeducciones],
+                ].filter(([, r, n, d]) => Math.abs(r || 0) >= 0.005 || Math.abs(n || 0) >= 0.005 || Math.abs(d || 0) >= 0.005);
+
+                const filasCount = conceptosTabla.length;
+                const conceptRowH = filasCount <= 9 ? 4.3 : filasCount <= 11 ? 3.9 : filasCount <= 13 ? 3.6 : 3.2;
+                const conceptFontSize = filasCount <= 9 ? 7.3 : filasCount <= 11 ? 7 : filasCount <= 13 ? 6.6 : 6.2;
+
+                doc.setFont("helvetica", "normal"); doc.setFontSize(conceptFontSize);
                 const filaTabla = (concepto, remun, norem, deduc) => {
                     const r = remun || 0, n = norem || 0, d = deduc || 0;
-                    if (Math.abs(r) < 0.005 && Math.abs(n) < 0.005 && Math.abs(d) < 0.005) return;
                     doc.text(concepto, col1, ly);
                     if (Math.abs(r) >= 0.005) doc.text("$ " + fmt(r), xRemun, ly, { align: "right" });
                     if (Math.abs(n) >= 0.005) doc.text("$ " + fmt(n), xNoRemun, ly, { align: "right" });
                     if (Math.abs(d) >= 0.005) doc.text("$ " + fmt(d), xDeduc, ly, { align: "right" });
-                    ly += 4.3;
+                    ly += conceptRowH;
                 };
 
-                filaTabla("Sueldo básico", calc.basico, 0, 0);
-                filaTabla(`Antigüedad`, calc.antigMonto, 0, 0);
-                filaTabla("Presentismo", calc.presentismoMonto, 0, 0);
-                filaTabla("Horas extra", (calc.he50 || 0) + (calc.he100 || 0), 0, 0);
-                filaTabla(liq.otrosRemunerativosConcepto || "Otras remuneraciones", calc.otrosRemun, 0, 0);
-                filaTabla(liq.noRemunerativosConcepto || "Asignación no remunerativa", 0, calc.noRemunerativoBase, 0);
-                filaTabla("Antigüedad s/no remunerativo", 0, calc.antigNoRemunMonto, 0);
-                filaTabla("Presentismo s/no remunerativo", 0, calc.presentismoNoRemunMonto, 0);
-                filaTabla("Jubilación (Ley 24.241) 11%", 0, 0, calc.jubilacion);
-                filaTabla("Ley 19.032 (INSSJP/PAMI) 3%", 0, 0, calc.ley19032);
-                filaTabla("Obra social 3%", 0, 0, calc.obraSocial);
-                filaTabla("Cuota sindical FAECyS 4,5%", 0, 0, calc.sindical);
-                filaTabla(liq.otrasDeduccionesConcepto || "Otras deducciones", 0, 0, calc.otrasDeducciones);
+                conceptosTabla.forEach(([concepto, remun, norem, deduc]) => filaTabla(concepto, remun, norem, deduc));
 
                 doc.setDrawColor(20, 20, 20); doc.setLineWidth(0.2);
                 doc.line(col1, ly - 1.5, xDeduc, ly - 1.5);
                 // -------------------- TOTALES --------------------
-                doc.setDrawColor(20, 20, 20);
-                doc.setLineWidth(0.2);
-                doc.line(col1, ly - 1.5, xDeduc, ly - 1.5);
-
                 ly += 2;
 
                 doc.setFont("helvetica", "bold");
@@ -1201,32 +1227,37 @@
                 doc.text("$ " + fmt(calc.totalDeducciones), xDeduc, ly, { align: "right" });
 
 
-                // -------------------- NETO --------------------
-                ly += 6;
+                // -------------------- NETO (posición flexible) --------------------
+                // Cuando hay pocos conceptos, el bloque de neto se ubica pegado a
+                // los totales, aprovechando el espacio libre hacia abajo. Cuando
+                // hay muchos conceptos (horas extra, plus vacacional, etc.) y la
+                // tabla se extiende, el bloque se corre hacia arriba lo justo
+                // para que siga entrando todo (son, contribuciones, texto legal
+                // y firma) sin desbordar el recuadro del recibo.
+                const netoMinY = ly + 3;
+                const netoMaxY = bottom - (calc.contribucionesPatronales > 0 ? 30 : 26);
+                const netoY = Math.min(netoMinY, netoMaxY);
 
                 doc.setDrawColor(20, 20, 20);
-                doc.rect(left, ly, right - left, 8);
+                doc.rect(left, netoY, right - left, 8);
 
                 doc.setFont("helvetica", "bold");
                 doc.setFontSize(9.5);
 
-                doc.text("NETO A COBRAR", left + 4, ly + 5.5);
-                doc.text("$ " + fmt(calc.neto), right - 4, ly + 5.5, { align: "right" });
+                doc.text("NETO A COBRAR", left + 4, netoY + 5.5);
+                doc.text("$ " + fmt(calc.neto), right - 4, netoY + 5.5, { align: "right" });
 
 
                 // -------------------- SON --------------------
-                ly += 12;
-
                 doc.setFont("helvetica", "italic");
                 doc.setFontSize(7);
 
-                doc.text("Son: " + pesosEnLetras(calc.neto), left + 4, ly);
+                doc.text("Son: " + pesosEnLetras(calc.neto), left + 4, netoY + 11.5);
 
 
                 // -------------------- CONTRIBUCIONES --------------------
+                let legalOffsetY = 15.5;
                 if (calc.contribucionesPatronales > 0) {
-
-                    ly += 4;
 
                     doc.setFont("helvetica", "italic");
                     doc.setFontSize(6.3);
@@ -1235,16 +1266,15 @@
                     doc.text(
                         `Contribuciones patronales a cargo del empleador (informativo): $ ${fmt(calc.contribucionesPatronales)}`,
                         left + 4,
-                        ly
+                        netoY + 15
                     );
 
                     doc.setTextColor(20, 20, 20);
+                    legalOffsetY = 18.5;
                 }
 
 
                 // -------------------- TEXTO LEGAL --------------------
-                ly += 4;
-
                 doc.setFont("helvetica", "normal");
                 doc.setFontSize(6.3);
                 doc.setTextColor(120, 120, 120);
@@ -1257,7 +1287,7 @@
                     ((right - left) / 2) - 4
                 );
 
-                doc.text(legalLineas, left + 4, ly);
+                doc.text(legalLineas, left + 4, netoY + legalOffsetY);
 
                 doc.setTextColor(20, 20, 20);
 
@@ -1489,6 +1519,85 @@
             doc.save(nombreArchivo);
         }
 
+        // PDF resumen simple: una tabla con columna "Empleado" y columna
+        // "Neto a cobrar", uno por fila, con salto de página automático y una
+        // fila de total al final. Útil para tener a mano cuánto hay que
+        // transferirle a cada persona sin abrir cada recibo.
+        function generarPDFPlanillaNetos(empresa, empleadosConLiq, escalaGeneral) {
+            const { jsPDF } = window.jspdf;
+            const doc = new jsPDF({ unit: "mm", format: "a4" });
+
+            const left = 20, right = 190;
+            const rowH = 8;
+            const topMargin = 20;
+            const bottomMargin = 20;
+            let periodoRef = "";
+
+            const filas = empleadosConLiq.map(({ emp, liq }) => {
+                const calc = calcularLiquidacion(emp, liq, escalaGeneral);
+                if (!periodoRef) periodoRef = liq.periodoLabel || liq.periodo || "";
+                return { nombre: emp.nombre || "(sin nombre)", neto: calc.neto };
+            });
+            const totalNeto = filas.reduce((acc, f) => acc + (f.neto || 0), 0);
+
+            let ly = topMargin;
+
+            function dibujarEncabezado() {
+                doc.setFont("times", "bold"); doc.setFontSize(14);
+                doc.text(empresa.razonSocial || "[Razón Social]", left, ly);
+                ly += 6;
+                doc.setFont("helvetica", "normal"); doc.setFontSize(9);
+                doc.setTextColor(90, 90, 90);
+                doc.text(`CUIT: ${empresa.cuit || "-"}`, left, ly);
+                ly += 5;
+                doc.setFont("helvetica", "bold"); doc.setFontSize(11);
+                doc.setTextColor(20, 20, 20);
+                doc.text(`Planilla de netos a cobrar${periodoRef ? " — " + periodoRef : ""}`, left, ly);
+                ly += 8;
+
+                doc.setDrawColor(20, 20, 20); doc.setLineWidth(0.3);
+                doc.setFont("helvetica", "bold"); doc.setFontSize(9);
+                doc.text("EMPLEADO", left, ly);
+                doc.text("NETO A COBRAR", right, ly, { align: "right" });
+                ly += 2;
+                doc.line(left, ly, right, ly);
+                ly += 6;
+                doc.setFont("helvetica", "normal"); doc.setFontSize(9.5);
+            }
+
+            dibujarEncabezado();
+
+            filas.forEach((f, idx) => {
+                if (ly > 297 - bottomMargin) {
+                    doc.addPage();
+                    ly = topMargin;
+                    dibujarEncabezado();
+                }
+                if (idx % 2 === 1) {
+                    doc.setFillColor(245, 244, 238);
+                    doc.rect(left - 2, ly - 5.5, (right - left) + 4, rowH, "F");
+                }
+                doc.setTextColor(20, 20, 20);
+                doc.text(f.nombre, left, ly);
+                doc.text("$ " + fmt(f.neto), right, ly, { align: "right" });
+                ly += rowH;
+            });
+
+            if (ly > 297 - bottomMargin - rowH) {
+                doc.addPage();
+                ly = topMargin;
+                dibujarEncabezado();
+            }
+            doc.setDrawColor(20, 20, 20); doc.setLineWidth(0.5);
+            doc.line(left, ly - 4, right, ly - 4);
+            doc.setFont("helvetica", "bold"); doc.setFontSize(10.5);
+            doc.text("TOTAL", left, ly);
+            doc.text("$ " + fmt(totalNeto), right, ly, { align: "right" });
+
+            const nombreArchivo = `PlanillaNetos_${(empresa.razonSocial || "empresa").replace(/\s+/g, "_")}_${periodoRef.replace(/\s+/g, "_") || "periodo"}.pdf`;
+            doc.save(nombreArchivo);
+        }
+
         /* ===================== Componentes ===================== */
 
         function TopBar({ empresa, setEmpresa }) {
@@ -1630,7 +1739,7 @@
                         <h3>Contribuciones patronales (informativo)</h3>
                         <div className="field" style={{ maxWidth: 220 }}>
                             <label>% contribuciones a cargo del empleador</label>
-                            <input type="number" step="0.01" placeholder="Ej. 26,40"
+                            <input type="text" placeholder="Ej. 26,40"
                                 value={escalaGeneral.contribucionesPatronalesPct}
                                 onChange={e => updateEscalaGeneral({ contribucionesPatronalesPct: e.target.value })} />
                         </div>
@@ -1837,8 +1946,12 @@
                                 <input type="number" step="0.5" value={liq.horasExtra100} onChange={e => updateLiq({ horasExtra100: e.target.value })} />
                             </div>
                             <div className="field">
+                                <label>Plus vacacional (cantidad de días)</label>
+                                <input type="text" min="0" value={liq.diasVacaciones} onChange={e => updateLiq({ diasVacaciones: e.target.value })} />
+                            </div>
+                            <div className="field">
                                 <label>Otras remuneraciones ($)</label>
-                                <input type="number" step="0.01" value={liq.otrosRemunerativos} onChange={e => updateLiq({ otrosRemunerativos: e.target.value })} />
+                                <input type="text" value={liq.otrosRemunerativos} onChange={e => updateLiq({ otrosRemunerativos: e.target.value })} />
                             </div>
                             <div className="field">
                                 <label>Concepto (otras remun.)</label>
@@ -1848,8 +1961,10 @@
                         </div>
                         <div className="hint">
                             Valor hora = básico ÷ 200. Las horas extra se calculan solas: cantidad de horas ×
-                            valor hora × 1,5 (al 50%) o × 2 (al 100%). No hace falta que cargues el monto en
-                            pesos, solo la cantidad de horas trabajadas.
+                            valor hora × 1,5 (al 50%) o × 2 (al 100%). El plus vacacional (Art. 155 LCT) funciona
+                            igual: valor día = básico ÷ 25, y el monto sale solo al cargar la cantidad de días de
+                            vacaciones que le corresponden al empleado. No hace falta cargar ningún importe en
+                            pesos a mano, solo las cantidades.
                         </div>
                         <div className="field checkbox">
                             <input type="checkbox" id="presentismo" checked={liq.presentismo}
@@ -1903,6 +2018,7 @@
                                 <tr><td className="label">Presentismo</td><td className="amount">$ {fmt(calc.presentismoMonto)}</td></tr>
                                 <tr><td className="label">Horas extra 50%</td><td className="amount">$ {fmt(calc.he50)}</td></tr>
                                 <tr><td className="label">Horas extra 100%</td><td className="amount">$ {fmt(calc.he100)}</td></tr>
+                                <tr><td className="label">Plus vacacional ({calc.diasVacaciones} día/s)</td><td className="amount">$ {fmt(calc.plusVacacional)}</td></tr>
                                 <tr><td className="label">Otras remuneraciones</td><td className="amount">$ {fmt(calc.otrosRemun)}</td></tr>
                                 <tr><td className="label">Asignación no remunerativa</td><td className="amount">$ {fmt(calc.noRemunerativoBase)}</td></tr>
                                 <tr><td className="label">Antigüedad s/no remunerativo</td><td className="amount">$ {fmt(calc.antigNoRemunMonto)}</td></tr>
@@ -2023,6 +2139,7 @@
                                 {calc.presentismoMonto > 0 && <tr><td>Presentismo</td><td className="num">$ {fmt(calc.presentismoMonto)}</td><td className="num"></td><td className="num"></td></tr>}
                                 {calc.he50 > 0 && <tr><td>Horas extra 50%</td><td className="num">$ {fmt(calc.he50)}</td><td className="num"></td><td className="num"></td></tr>}
                                 {calc.he100 > 0 && <tr><td>Horas extra 100%</td><td className="num">$ {fmt(calc.he100)}</td><td className="num"></td><td className="num"></td></tr>}
+                                {calc.plusVacacional > 0 && <tr><td>Plus vacacional ({calc.diasVacaciones} día/s)</td><td className="num">$ {fmt(calc.plusVacacional)}</td><td className="num"></td><td className="num"></td></tr>}
                                 {calc.otrosRemun > 0 && <tr><td>{liq.otrosRemunerativosConcepto || "Otras remuneraciones"}</td><td className="num">$ {fmt(calc.otrosRemun)}</td><td className="num"></td><td className="num"></td></tr>}
                                 {calc.noRemunerativoBase > 0 && <tr><td>{liq.noRemunerativosConcepto || "Asig. no remunerativa"}</td><td className="num"></td><td className="num">$ {fmt(calc.noRemunerativoBase)}</td><td className="num"></td></tr>}
                                 {calc.antigNoRemunMonto > 0 && <tr><td>Antigüedad s/no remunerativo</td><td className="num"></td><td className="num">$ {fmt(calc.antigNoRemunMonto)}</td><td className="num"></td></tr>}
@@ -2092,6 +2209,7 @@
                 noRemunerativos: "", noRemunerativosConcepto: "",
                 otrasDeducciones: "", otrasDeduccionesConcepto: "",
                 aguinaldoIncluirHorasExtra: false,
+                diasVacaciones: "",
             };
         }
 
@@ -2198,6 +2316,19 @@
                 }));
                 generarPDFAguinaldoTodos(empresa, empleadosConLiq, escalaGeneral);
                 mostrarToast(`PDF de aguinaldos con ${empleadosConLiq.length} empleado(s) generado ✓`);
+            }
+
+            function onGenerarPlanillaNetosPDF() {
+                if (empleados.length === 0) {
+                    mostrarToast("Todavía no cargaste ningún empleado.");
+                    return;
+                }
+                const empleadosConLiq = empleados.map(e => ({
+                    emp: e,
+                    liq: liqPorEmpleado[e.id] || defaultLiq()
+                }));
+                generarPDFPlanillaNetos(empresa, empleadosConLiq, escalaGeneral);
+                mostrarToast(`Planilla de netos con ${empleadosConLiq.length} empleado(s) generada ✓`);
             }
 
             async function onProbarWebhook() {
@@ -2324,6 +2455,7 @@
                         <div style={{ marginTop: 8, display: "flex", gap: 10, justifyContent: "center", flexWrap: "wrap" }}>
                             <button className="btn btn-primary btn-sm" onClick={onGenerarTodosPDF}>⬇ Descargar todos los recibos (PDF)</button>
                             <button className="btn btn-primary btn-sm" onClick={onGenerarTodosAguinaldoPDF}>🎁 Descargar todos los aguinaldos (PDF)</button>
+                            <button className="btn btn-ghost btn-sm" onClick={onGenerarPlanillaNetosPDF}>📋 Planilla de netos (PDF)</button>
                             <button className="btn btn-ghost btn-sm" onClick={exportarJSON}>⇩ Exportar datos (JSON)</button>
                             <button className="btn btn-ghost btn-sm" onClick={() => fileInputRef.current.click()}>⇧ Importar datos (JSON)</button>
                             <input type="file" accept="application/json" ref={fileInputRef} style={{ display: "none" }} onChange={importarJSON} />
