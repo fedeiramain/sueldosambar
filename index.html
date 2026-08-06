@@ -2318,19 +2318,24 @@
                 mostrarToast(`PDF de aguinaldos con ${empleadosConLiq.length} empleado(s) generado ✓`);
             }
 
-            function onGenerarPlanillaNetosPDF() {
+             function onGenerarPlanillaNetosPDF() {
                 if (empleados.length === 0) {
                     mostrarToast("Todavía no cargaste ningún empleado.");
                     return;
                 }
-                const empleadosConLiq = empleados.map(e => ({
-                    emp: e,
-                    liq: liqPorEmpleado[e.id] || defaultLiq()
-                }));
+                // Excluidos puntuales de esta planilla (por CUIL, sin importar
+                // guiones/espacios en cómo esté cargado).
+                const cuilsExcluidos = ["20374991141"];
+                const soloDigitos = (v) => (v || "").replace(/\D/g, "");
+                const empleadosConLiq = empleados
+                    .filter(e => !cuilsExcluidos.includes(soloDigitos(e.cuil)))
+                    .map(e => ({
+                        emp: e,
+                        liq: liqPorEmpleado[e.id] || defaultLiq()
+                    }));
                 generarPDFPlanillaNetos(empresa, empleadosConLiq, escalaGeneral);
                 mostrarToast(`Planilla de netos con ${empleadosConLiq.length} empleado(s) generada ✓`);
             }
-
             async function onProbarWebhook() {
                 if (!webhookUrl) {
                     mostrarToast("Ingresá primero la URL del webhook.");
