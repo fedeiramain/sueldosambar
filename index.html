@@ -792,6 +792,13 @@
 
         const uid = () => Math.random().toString(36).slice(2, 10);
 
+        // CUILs excluidos de los reportes agregados (planilla de netos,
+        // costeo del servicio, etc.), sin importar guiones/espacios en cómo
+        // estén cargados. No afecta los recibos individuales ni "todos los
+        // recibos" — esos siguen incluyendo a todos los empleados.
+        const CUILS_EXCLUIDOS_REPORTES = ["20374991141"];
+        const soloDigitosCuil = (v) => (v || "").replace(/\D/g, "");
+
         const CATEGORIAS = [
             "Maestranza y Servicios",
             "Administrativo \"C\"",
@@ -923,9 +930,8 @@
             // de vacaciones y el monto se calcula solo, igual que las horas
             // extra (básico ÷ 25 × días), sin necesidad de tipear el importe.
             const valorDiaVacaciones = basico > 0 ? basico / 25 : 0;
-            const valorDia = basico > 0 ? basico / 25 : 0;
             const diasVacaciones = parseFloat(liq.diasVacaciones) || 0;
-            const plusVacacional = diasVacaciones * valorDiaVacaciones - valorDia * diasVacaciones; // se descuenta el básico de esos días
+            const plusVacacional = diasVacaciones * valorDiaVacaciones;
 
             const otrosRemun = parseFloat(liq.otrosRemunerativos) || 0;
 
@@ -1598,6 +1604,213 @@
             doc.save(nombreArchivo);
         }
 
+        // PDF de costeo del servicio: por cada empleado informa el neto a
+        // cobrar, el total de aportes + contribuciones patronales (la parte
+        // de seguridad social, calculada como si el empleado trabajase
+        // jornada completa —40 hs— sin importar su situación de revista
+        // real), la cuota sindical por separado y el proporcional mensual
+        // de aguinaldo. Al pie suma todo, aplica una utilidad del 10% y
+        // sobre ese total calcula el 21% de impuestos, hasta el total a
+        // facturar.
+        //
+        // Criterios aplicados (quedan también aclarados al pie del PDF):
+        // - Aportes (jubilación 11% + Ley 19.032 3% + obra social 3%) y
+        //   contribuciones patronales: recalculados sobre una base de
+        //   jornada completa (40 hs) para cada empleado, independientemente
+        //   de si su jornada real es completa, 3/4 o media.
+        // - Cuota sindical y proporcional de aguinaldo: sobre la
+        //   remuneración real de cada empleado (no se llevan a 40 hs).
+        // - Proporcional de aguinaldo mensual = (remunerativo + no
+        //   remunerativo del mes) ÷ 12.
+        function generarPDFCosteoServicio(empresa, empleadosConLiq, escalaGeneral) {
+            const { jsPDF } = window.jspdf;
+            const doc = new jsPDF({ unit: "mm", format: "a4", orientation: "landscape" });
+
+            const left = 14, right = 283;
+            const colEmp = left;
+            const colNeto = 120, colSS = 153, colART = 186, colSind = 219, colAgui = 252, colSub = right;
+            const rowH = 8;
+            const topMargin = 18;
+            const pageBottom = 192; // A4 landscape: 210mm de alto, con margen
+            let periodoRef = "";
+
+            // Horas mensuales tomadas como base fija para aportes,
+            // contribuciones y ART (seguridad social), sin importar la
+            // jornada real del empleado (200 hs/mes en jornada completa,
+            // 100 hs/mes en media jornada, etc. — siempre se usan estas 40).
+            const HORAS_BASE_SS = 40;
+            const ART_PCT = 0.052;
+            // La cuota sindical, en cambio, se calcula considerando a todos
+            // los empleados como si fueran de media jornada (100 hs/mes),
+            // sin importar su jornada real.
+            const HORAS_BASE_SINDICAL = 100;
+
+            const filas = empleadosConLiq.map(({ emp, liq }) => {
+                const calc = calcularLiquidacion(emp, liq, escalaGeneral);
+                if (!periodoRef) periodoRef = liq.periodoLabel || liq.periodo || "";
+
+                // Básico y no remunerativo a jornada completa (200 hs/mes),
+                // independiente de la jornada real del empleado: si usa la
+                // escala general, salen directo de la escala; si están
+                // cargados a mano para una jornada reducida, se llevan a
+                // jornada completa dividiendo por la fracción de esa jornada.
+                const usaEscala = liq.usarEscalaGeneral !== false;
+                const basicoJornadaCompleta = usaEscala
+                    ? (parseFloat((escalaGeneral.basicos || {})[emp.categoria]) || 0)
+                    : (parseFloat(liq.basico) || 0) / (calc.fraccion || 1);
+                const noRemunJornadaCompleta = usaEscala
+                    ? (parseFloat(escalaGeneral.noRemunerativo) || 0)
+                    : (parseFloat(liq.noRemunerativos) || 0) / (calc.fraccion || 1);
+
+                const valorHoraCompleta = basicoJornadaCompleta > 0 ? basicoJornadaCompleta / 200 : 0;
+                const valorHoraNoRemunCompleta = noRemunJornadaCompleta > 0 ? noRemunJornadaCompleta / 200 : 0;
+                const baseAportesSS = valorHoraCompleta * HORAS_BASE_SS;
+                const baseNoRemunSS = valorHoraNoRemunCompleta * HORAS_BASE_SS;
+
+                const contribPatronalesPct = parseFloat(escalaGeneral.contribucionesPatronalesPct) || 0;
+                const aportesYContrib = baseAportesSS * 0.11   // jubilación (base 40 hs)
+                    + baseAportesSS * 0.03                     // Ley 19.032 (base 40 hs)
+                    + calc.obraSocial                          // obra social: igual que en el recibo real
+                    + baseAportesSS * contribPatronalesPct / 100; // contribuciones patronales (base 40 hs)
+
+                // ART 5,2%, sobre remunerativo y no remunerativo, ambos
+                // proporcionales a la base fija de 40 hs.
+                const art = (baseAportesSS + baseNoRemunSS) * ART_PCT;
+
+                // Cuota sindical 4,5%, sobre remunerativo y no remunerativo,
+                // ambos proporcionales a la base fija de media jornada
+                // (100 hs), para todos los empleados por igual.
+                const baseSindicalRemun = valorHoraCompleta * HORAS_BASE_SINDICAL;
+                const baseSindicalNoRemun = valorHoraNoRemunCompleta * HORAS_BASE_SINDICAL;
+                const sindical = emp.afiliadoSindicato ? (baseSindicalRemun + baseSindicalNoRemun) * 0.045 : 0;
+
+                const aguinaldoProp = (calc.totalRemunerativo + calc.noRemunerativo) / 12;
+                const subtotal = calc.neto + aportesYContrib + art + sindical + aguinaldoProp;
+
+                return { nombre: emp.nombre || "(sin nombre)", neto: calc.neto, aportesYContrib, art, sindical, aguinaldoProp, subtotal };
+            });
+
+            const sum = (key) => filas.reduce((acc, f) => acc + (f[key] || 0), 0);
+            const totalNeto = sum("neto");
+            const totalAportes = sum("aportesYContrib");
+            const totalART = sum("art");
+            const totalSindical = sum("sindical");
+            const totalAguinaldo = sum("aguinaldoProp");
+            const subtotalCostoLaboral = sum("subtotal");
+            const utilidad = subtotalCostoLaboral * 0.10;
+            const baseImpuestos = subtotalCostoLaboral + utilidad;
+            const impuestos = baseImpuestos * 0.21;
+            const totalFacturar = baseImpuestos + impuestos;
+
+            let ly = topMargin;
+
+            function dibujarEncabezado() {
+                doc.setFont("times", "bold"); doc.setFontSize(14);
+                doc.text(empresa.razonSocial || "[Razón Social]", left, ly);
+                ly += 6;
+                doc.setFont("helvetica", "normal"); doc.setFontSize(9);
+                doc.setTextColor(90, 90, 90);
+                doc.text(`CUIT: ${empresa.cuit || "-"}`, left, ly);
+                ly += 5;
+                doc.setFont("helvetica", "bold"); doc.setFontSize(11);
+                doc.setTextColor(20, 20, 20);
+                doc.text(`Costeo del servicio${periodoRef ? " — " + periodoRef : ""}`, left, ly);
+                ly += 8;
+
+                doc.setDrawColor(20, 20, 20); doc.setLineWidth(0.3);
+                doc.setFont("helvetica", "bold"); doc.setFontSize(8);
+                doc.text("EMPLEADO", colEmp, ly);
+                doc.text("NETO A COBRAR", colNeto, ly, { align: "right" });
+                doc.text("SS + OS", colSS, ly, { align: "right" });
+                doc.text("ART (5,2%)", colART, ly, { align: "right" });
+                doc.text("SINDICAL", colSind, ly, { align: "right" });
+                doc.text("PROP. AGUINALDO", colAgui, ly, { align: "right" });
+                doc.text("SUBTOTAL", colSub, ly, { align: "right" });
+                ly += 2;
+                doc.line(left, ly, right, ly);
+                ly += 6;
+                doc.setFont("helvetica", "normal"); doc.setFontSize(9);
+            }
+
+            dibujarEncabezado();
+
+            filas.forEach((f, idx) => {
+                if (ly > pageBottom) {
+                    doc.addPage();
+                    ly = topMargin;
+                    dibujarEncabezado();
+                }
+                if (idx % 2 === 1) {
+                    doc.setFillColor(245, 244, 238);
+                    doc.rect(left - 2, ly - 5.5, (right - left) + 4, rowH, "F");
+                }
+                doc.setTextColor(20, 20, 20);
+                doc.text(f.nombre, colEmp, ly);
+                doc.text("$ " + fmt(f.neto), colNeto, ly, { align: "right" });
+                doc.text("$ " + fmt(f.aportesYContrib), colSS, ly, { align: "right" });
+                doc.text("$ " + fmt(f.art), colART, ly, { align: "right" });
+                doc.text("$ " + fmt(f.sindical), colSind, ly, { align: "right" });
+                doc.text("$ " + fmt(f.aguinaldoProp), colAgui, ly, { align: "right" });
+                doc.setFont("helvetica", "bold");
+                doc.text("$ " + fmt(f.subtotal), colSub, ly, { align: "right" });
+                doc.setFont("helvetica", "normal");
+                ly += rowH;
+            });
+
+            // -------- Fila de totales por columna --------
+            if (ly > pageBottom - rowH) {
+                doc.addPage();
+                ly = topMargin;
+                dibujarEncabezado();
+            }
+            doc.setDrawColor(20, 20, 20); doc.setLineWidth(0.4);
+            doc.line(left, ly - 4, right, ly - 4);
+            doc.setFont("helvetica", "bold"); doc.setFontSize(9);
+            doc.text("TOTALES", colEmp, ly);
+            doc.text("$ " + fmt(totalNeto), colNeto, ly, { align: "right" });
+            doc.text("$ " + fmt(totalAportes), colSS, ly, { align: "right" });
+            doc.text("$ " + fmt(totalART), colART, ly, { align: "right" });
+            doc.text("$ " + fmt(totalSindical), colSind, ly, { align: "right" });
+            doc.text("$ " + fmt(totalAguinaldo), colAgui, ly, { align: "right" });
+            doc.text("$ " + fmt(subtotalCostoLaboral), colSub, ly, { align: "right" });
+            ly += 14;
+
+            // -------- Resumen de facturación (utilidad + impuestos) --------
+            if (ly > pageBottom - 45) {
+                doc.addPage();
+                ly = topMargin;
+            }
+            const boxLeft = right - 95;
+            doc.setFont("helvetica", "normal"); doc.setFontSize(9.5);
+            const resumenRow = (label, value, bold, big) => {
+                doc.setFont("helvetica", bold ? "bold" : "normal");
+                doc.setFontSize(big ? 11.5 : 9.5);
+                doc.text(label, boxLeft, ly);
+                doc.text("$ " + fmt(value), right, ly, { align: "right" });
+                ly += big ? 7.5 : 6.5;
+            };
+            resumenRow("Subtotal costo laboral", subtotalCostoLaboral, false, false);
+            resumenRow("ADMINISTRACION", utilidad, false, false);
+            resumenRow("Base imponible", baseImpuestos, false, false);
+            resumenRow("Impuestos (21%)", impuestos, false, false);
+            doc.setDrawColor(20, 20, 20); doc.setLineWidth(0.4);
+            doc.line(boxLeft, ly - 4.5, right, ly - 4.5);
+            resumenRow("TOTAL A FACTURAR", totalFacturar, true, true);
+
+            // -------- Aclaración de criterio --------
+            ly += 6;
+            if (ly > pageBottom + 10) { doc.addPage(); ly = topMargin; }
+            doc.setFont("helvetica", "italic"); doc.setFontSize(7);
+            doc.setTextColor(120, 120, 120);
+            const nota = "Jubilación (11%), Ley 19.032 (3%), ART (5,2%) y contribuciones patronales calculados sobre una base fija de 40 horas mensuales por empleado (valor hora de su categoría a jornada completa, tanto para el concepto remunerativo como el no remunerativo), sin importar su jornada real. Cuota sindical (4,5%, solo afiliados) calculada sobre una base fija de media jornada (100 hs mensuales), también sin importar la jornada real. Obra social calculada igual que en el recibo mensual real de cada empleado (con el regrosamiento por jornada reducida cuando corresponde). Proporcional de aguinaldo (remunerativo + no remunerativo del mes ÷ 12) calculado sobre la remuneración real de cada empleado.";
+            const notaLineas = doc.splitTextToSize(nota, right - left);
+            doc.text(notaLineas, left, ly);
+            doc.setTextColor(20, 20, 20);
+
+            const nombreArchivo = `CosteoServicio_${(empresa.razonSocial || "empresa").replace(/\s+/g, "_")}_${periodoRef.replace(/\s+/g, "_") || "periodo"}.pdf`;
+            doc.save(nombreArchivo);
+        }
+
         /* ===================== Componentes ===================== */
 
         function TopBar({ empresa, setEmpresa }) {
@@ -1689,7 +1902,7 @@
                             </div>
                             <div className="field">
                                 <label>Básico jornada completa ($)</label>
-                                <input type="number" step="0.01" value={basicoActual}
+                                <input type="text" value={basicoActual}
                                     onChange={e => updateEscalaGeneral({
                                         basicos: { ...basicos, [catSeleccionada]: e.target.value }
                                     })} />
@@ -1721,7 +1934,7 @@
                         <div className="grid">
                             <div className="field">
                                 <label>Monto jornada completa ($)</label>
-                                <input type="number" step="0.01" value={escalaGeneral.noRemunerativo}
+                                <input type="text" value={escalaGeneral.noRemunerativo}
                                     onChange={e => updateEscalaGeneral({ noRemunerativo: e.target.value })} />
                             </div>
                             <div className="field">
@@ -1927,7 +2140,7 @@
                             </div>
                             <div className="field">
                                 <label>Sueldo básico ($)</label>
-                                <input type="number" step="0.01"
+                                <input type="text"
                                     disabled={usarEscala}
                                     value={usarEscala ? calc.basico.toFixed(2) : liq.basico}
                                     onChange={e => updateLiq({ basico: e.target.value })} />
@@ -1935,15 +2148,15 @@
                             </div>
                             <div className="field">
                                 <label>% antigüedad por año</label>
-                                <input type="number" step="0.1" value={liq.antigPctPorAnio} onChange={e => updateLiq({ antigPctPorAnio: e.target.value })} />
+                                <input type="text" value={liq.antigPctPorAnio} onChange={e => updateLiq({ antigPctPorAnio: e.target.value })} />
                             </div>
                             <div className="field">
                                 <label>Horas extra al 50% (cantidad de hs.)</label>
-                                <input type="number" step="0.5" value={liq.horasExtra50} onChange={e => updateLiq({ horasExtra50: e.target.value })} />
+                                <input type="text" value={liq.horasExtra50} onChange={e => updateLiq({ horasExtra50: e.target.value })} />
                             </div>
                             <div className="field">
                                 <label>Horas extra al 100% (cantidad de hs.)</label>
-                                <input type="number" step="0.5" value={liq.horasExtra100} onChange={e => updateLiq({ horasExtra100: e.target.value })} />
+                                <input type="text" value={liq.horasExtra100} onChange={e => updateLiq({ horasExtra100: e.target.value })} />
                             </div>
                             <div className="field">
                                 <label>Plus vacacional (cantidad de días)</label>
@@ -1978,7 +2191,7 @@
                         <div className="grid">
                             <div className="field">
                                 <label>Asignación no remunerativa ($)</label>
-                                <input type="number" step="0.01" className="no-spinner"
+                                <input type="text" className="no-spinner"
                                     disabled={usarEscala}
                                     value={usarEscala ? calc.noRemunerativoBase.toFixed(2) : liq.noRemunerativos}
                                     onChange={e => updateLiq({ noRemunerativos: e.target.value })} />
@@ -1991,7 +2204,7 @@
                             </div>
                             <div className="field">
                                 <label>Otras deducciones ($)</label>
-                                <input type="number" step="0.01" value={liq.otrasDeducciones} onChange={e => updateLiq({ otrasDeducciones: e.target.value })} />
+                                <input type="text" value={liq.otrasDeducciones} onChange={e => updateLiq({ otrasDeducciones: e.target.value })} />
                             </div>
                             <div className="field">
                                 <label>Concepto (otras deducc.)</label>
@@ -2318,17 +2531,13 @@
                 mostrarToast(`PDF de aguinaldos con ${empleadosConLiq.length} empleado(s) generado ✓`);
             }
 
-             function onGenerarPlanillaNetosPDF() {
+            function onGenerarPlanillaNetosPDF() {
                 if (empleados.length === 0) {
                     mostrarToast("Todavía no cargaste ningún empleado.");
                     return;
                 }
-                // Excluidos puntuales de esta planilla (por CUIL, sin importar
-                // guiones/espacios en cómo esté cargado).
-                const cuilsExcluidos = ["20374991141"];
-                const soloDigitos = (v) => (v || "").replace(/\D/g, "");
                 const empleadosConLiq = empleados
-                    .filter(e => !cuilsExcluidos.includes(soloDigitos(e.cuil)))
+                    .filter(e => !CUILS_EXCLUIDOS_REPORTES.includes(soloDigitosCuil(e.cuil)))
                     .map(e => ({
                         emp: e,
                         liq: liqPorEmpleado[e.id] || defaultLiq()
@@ -2336,6 +2545,22 @@
                 generarPDFPlanillaNetos(empresa, empleadosConLiq, escalaGeneral);
                 mostrarToast(`Planilla de netos con ${empleadosConLiq.length} empleado(s) generada ✓`);
             }
+
+            function onGenerarCosteoServicioPDF() {
+                if (empleados.length === 0) {
+                    mostrarToast("Todavía no cargaste ningún empleado.");
+                    return;
+                }
+                const empleadosConLiq = empleados
+                    .filter(e => !CUILS_EXCLUIDOS_REPORTES.includes(soloDigitosCuil(e.cuil)))
+                    .map(e => ({
+                        emp: e,
+                        liq: liqPorEmpleado[e.id] || defaultLiq()
+                    }));
+                generarPDFCosteoServicio(empresa, empleadosConLiq, escalaGeneral);
+                mostrarToast(`Costeo del servicio con ${empleadosConLiq.length} empleado(s) generado ✓`);
+            }
+
             async function onProbarWebhook() {
                 if (!webhookUrl) {
                     mostrarToast("Ingresá primero la URL del webhook.");
@@ -2461,6 +2686,7 @@
                             <button className="btn btn-primary btn-sm" onClick={onGenerarTodosPDF}>⬇ Descargar todos los recibos (PDF)</button>
                             <button className="btn btn-primary btn-sm" onClick={onGenerarTodosAguinaldoPDF}>🎁 Descargar todos los aguinaldos (PDF)</button>
                             <button className="btn btn-ghost btn-sm" onClick={onGenerarPlanillaNetosPDF}>📋 Planilla de netos (PDF)</button>
+                            <button className="btn btn-ghost btn-sm" onClick={onGenerarCosteoServicioPDF}>🧾 Costeo del servicio (PDF)</button>
                             <button className="btn btn-ghost btn-sm" onClick={exportarJSON}>⇩ Exportar datos (JSON)</button>
                             <button className="btn btn-ghost btn-sm" onClick={() => fileInputRef.current.click()}>⇧ Importar datos (JSON)</button>
                             <input type="file" accept="application/json" ref={fileInputRef} style={{ display: "none" }} onChange={importarJSON} />
