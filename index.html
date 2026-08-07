@@ -843,6 +843,30 @@
             };
         }
 
+        // Período (mes/año) y fecha de pago general, aplicado por defecto a
+        // todos los empleados (igual criterio que la escala salarial
+        // general): cada liquidación puntual puede desactivarlo y cargar su
+        // propio período/fecha de pago.
+        function defaultPeriodoGeneral() {
+            return { periodo: "", periodoLabel: "", fechaPago: "", fechaPagoRaw: "" };
+        }
+
+        // Devuelve la liquidación "resuelta": si usa el período general
+        // (por defecto sí), pisa periodo/periodoLabel/fechaPago/fechaPagoRaw
+        // con los valores globales; si no, respeta los cargados a mano en esa
+        // liquidación puntual.
+        function resolverLiq(liq, periodoGeneral) {
+            const usarPeriodoGeneral = liq.usarPeriodoGeneral !== false;
+            if (!usarPeriodoGeneral) return liq;
+            return {
+                ...liq,
+                periodo: periodoGeneral.periodo,
+                periodoLabel: periodoGeneral.periodoLabel,
+                fechaPago: periodoGeneral.fechaPago,
+                fechaPagoRaw: periodoGeneral.fechaPagoRaw,
+            };
+        }
+
         // Número a letras (pesos argentinos)
         const UNIDADES = ["", "uno", "dos", "tres", "cuatro", "cinco", "seis", "siete", "ocho", "nueve", "diez",
             "once", "doce", "trece", "catorce", "quince", "dieciséis", "diecisiete", "dieciocho", "diecinueve", "veinte"];
@@ -930,8 +954,9 @@
             // de vacaciones y el monto se calcula solo, igual que las horas
             // extra (básico ÷ 25 × días), sin necesidad de tipear el importe.
             const valorDiaVacaciones = basico > 0 ? basico / 25 : 0;
+            const valorDia = basico > 0 ? basico / 30 : 0;
             const diasVacaciones = parseFloat(liq.diasVacaciones) || 0;
-            const plusVacacional = diasVacaciones * valorDiaVacaciones;
+            const plusVacacional = diasVacaciones * valorDiaVacaciones - valorDia * diasVacaciones;
 
             const otrosRemun = parseFloat(liq.otrosRemunerativos) || 0;
 
@@ -1610,7 +1635,7 @@
         // jornada completa —40 hs— sin importar su situación de revista
         // real), la cuota sindical por separado y el proporcional mensual
         // de aguinaldo. Al pie suma todo, aplica una utilidad del 10% y
-        // sobre ese total calcula el 21% de impuestos, hasta el total a
+        // sobre ese total calcula el 2% de reserva legal, hasta el total a
         // facturar.
         //
         // Criterios aplicados (quedan también aclarados al pie del PDF):
@@ -1628,79 +1653,77 @@
 
             const left = 14, right = 283;
             const colEmp = left;
-            const colNeto = 120, colSS = 153, colART = 186, colSind = 219, colAgui = 252, colSub = right;
+            const colNeto = 104, colSS = 132, colOS = 160, colART = 188, colSind = 216, colAgui = 250, colSub = right;
             const rowH = 8;
             const topMargin = 18;
             const pageBottom = 192; // A4 landscape: 210mm de alto, con margen
             let periodoRef = "";
 
-            // Horas mensuales tomadas como base fija para aportes,
-            // contribuciones y ART (seguridad social), sin importar la
-            // jornada real del empleado (200 hs/mes en jornada completa,
-            // 100 hs/mes en media jornada, etc. — siempre se usan estas 40).
-            const HORAS_BASE_SS = 40;
-            const ART_PCT = 0.052;
-            // La cuota sindical, en cambio, se calcula considerando a todos
-            // los empleados como si fueran de media jornada (100 hs/mes),
-            // sin importar su jornada real.
-            const HORAS_BASE_SINDICAL = 100;
-
             const filas = empleadosConLiq.map(({ emp, liq }) => {
                 const calc = calcularLiquidacion(emp, liq, escalaGeneral);
                 if (!periodoRef) periodoRef = liq.periodoLabel || liq.periodo || "";
 
-                // Básico y no remunerativo a jornada completa (200 hs/mes),
-                // independiente de la jornada real del empleado: si usa la
-                // escala general, salen directo de la escala; si están
-                // cargados a mano para una jornada reducida, se llevan a
-                // jornada completa dividiendo por la fracción de esa jornada.
-                const usaEscala = liq.usarEscalaGeneral !== false;
-                const basicoJornadaCompleta = usaEscala
-                    ? (parseFloat((escalaGeneral.basicos || {})[emp.categoria]) || 0)
-                    : (parseFloat(liq.basico) || 0) / (calc.fraccion || 1);
-                const noRemunJornadaCompleta = usaEscala
-                    ? (parseFloat(escalaGeneral.noRemunerativo) || 0)
-                    : (parseFloat(liq.noRemunerativos) || 0) / (calc.fraccion || 1);
+                // SS: se parte del aporte EXACTO de cada empleado — jubilación
+                // (11%) + Ley 19.032 (3%), tal como los calcula la liquidación
+                // real (calc.jubilacion / calc.ley19032, sobre su remuneración
+                // total real: básico, antigüedad, horas extra, presentismo,
+                // etc.) — y se lo ajusta según la jornada:
+                // - Jornada completa: el aporte se divide en 2.
+                // - Tres cuartos de jornada: el aporte se divide en 3 y se
+                //   multiplica por 2.
+                // - Media jornada: el aporte queda sin ajustar.
+                // Sobre ese aporte ya ajustado se calculan las contribuciones
+                // patronales, llevando el 14% (11% + 3%) a la alícuota de 17%:
+                // aporte ÷ 14 × 17.
+                let aporte = calc.jubilacion + calc.ley19032;
+                if (calc.jornada === "COMPLETA") {
+                    aporte = aporte / 2;
+                } else if (calc.jornada === "TRES_CUARTOS") {
+                    aporte = aporte / 3 * 2;
+                }
+                const contribuciones = aporte / 14 * 17;
+                const ss = aporte + contribuciones;
+                // OS: se parte del importe EXACTO de obra social de cada
+                // empleado (calc.obraSocial, calculado igual que en su recibo
+                // real, con el regrosamiento por jornada reducida cuando
+                // corresponde) y se lo multiplica por 3.
+                const os = calc.obraSocial * 3;
 
-                const valorHoraCompleta = basicoJornadaCompleta > 0 ? basicoJornadaCompleta / 200 : 0;
-                const valorHoraNoRemunCompleta = noRemunJornadaCompleta > 0 ? noRemunJornadaCompleta / 200 : 0;
-                const baseAportesSS = valorHoraCompleta * HORAS_BASE_SS;
-                const baseNoRemunSS = valorHoraNoRemunCompleta * HORAS_BASE_SS;
+                // ART: se toma el valor de OS ya calculado arriba y se lo
+                // divide en 18 y se lo multiplica por 4,7.
+                const art = os / 18 * 4.7;
 
-                const contribPatronalesPct = parseFloat(escalaGeneral.contribucionesPatronalesPct) || 0;
-                const aportesYContrib = baseAportesSS * 0.11   // jubilación (base 40 hs)
-                    + baseAportesSS * 0.03                     // Ley 19.032 (base 40 hs)
-                    + calc.obraSocial                          // obra social: igual que en el recibo real
-                    + baseAportesSS * contribPatronalesPct / 100; // contribuciones patronales (base 40 hs)
+                // Cuota sindical: mismo criterio que ART — se toma el valor
+                // de OS y se lo divide en 18 y se lo multiplica por 4 — solo
+                // para empleados afiliados al sindicato.
+                const sindical = emp.afiliadoSindicato ? (os / 18 * 4) : 0;
 
-                // ART 5,2%, sobre remunerativo y no remunerativo, ambos
-                // proporcionales a la base fija de 40 hs.
-                const art = (baseAportesSS + baseNoRemunSS) * ART_PCT;
-
-                // Cuota sindical 4,5%, sobre remunerativo y no remunerativo,
-                // ambos proporcionales a la base fija de media jornada
-                // (100 hs), para todos los empleados por igual.
-                const baseSindicalRemun = valorHoraCompleta * HORAS_BASE_SINDICAL;
-                const baseSindicalNoRemun = valorHoraNoRemunCompleta * HORAS_BASE_SINDICAL;
-                const sindical = emp.afiliadoSindicato ? (baseSindicalRemun + baseSindicalNoRemun) * 0.045 : 0;
+                // Salud Pública: mismo criterio que ART — se toma el valor
+                // de OS y se lo divide en 18 y se lo multiplica por 2,5. No
+                // se muestra por empleado en la tabla, solo se suma para el
+                // resumen de facturación (antes de administración).
+                const saludPublica = os / 18 * 2.5;
 
                 const aguinaldoProp = (calc.totalRemunerativo + calc.noRemunerativo) / 12;
-                const subtotal = calc.neto + aportesYContrib + art + sindical + aguinaldoProp;
+                const subtotal = calc.neto + ss + os + art + sindical + aguinaldoProp;
 
-                return { nombre: emp.nombre || "(sin nombre)", neto: calc.neto, aportesYContrib, art, sindical, aguinaldoProp, subtotal };
+                return { nombre: emp.nombre || "(sin nombre)", neto: calc.neto, ss, os, art, sindical, aguinaldoProp, subtotal, saludPublica };
             });
 
             const sum = (key) => filas.reduce((acc, f) => acc + (f[key] || 0), 0);
             const totalNeto = sum("neto");
-            const totalAportes = sum("aportesYContrib");
+            const totalSS = sum("ss");
+            const totalOS = sum("os");
             const totalART = sum("art");
             const totalSindical = sum("sindical");
             const totalAguinaldo = sum("aguinaldoProp");
             const subtotalCostoLaboral = sum("subtotal");
-            const utilidad = subtotalCostoLaboral * 0.10;
-            const baseImpuestos = subtotalCostoLaboral + utilidad;
-            const impuestos = baseImpuestos * 0.21;
-            const totalFacturar = baseImpuestos + impuestos;
+            const totalSaludPublica = sum("saludPublica");
+            const baseConSalud = subtotalCostoLaboral + totalSaludPublica;
+            const utilidad = baseConSalud * 0.10;
+            const baseImpuestos = baseConSalud + utilidad;
+            const reservaLegal = baseImpuestos * 0.02;
+            const totalFacturar = baseImpuestos + reservaLegal;
 
             let ly = topMargin;
 
@@ -1718,10 +1741,11 @@
                 ly += 8;
 
                 doc.setDrawColor(20, 20, 20); doc.setLineWidth(0.3);
-                doc.setFont("helvetica", "bold"); doc.setFontSize(8);
+                doc.setFont("helvetica", "bold"); doc.setFontSize(7.5);
                 doc.text("EMPLEADO", colEmp, ly);
                 doc.text("NETO A COBRAR", colNeto, ly, { align: "right" });
-                doc.text("SS + OS", colSS, ly, { align: "right" });
+                doc.text("SS", colSS, ly, { align: "right" });
+                doc.text("OS", colOS, ly, { align: "right" });
                 doc.text("ART (5,2%)", colART, ly, { align: "right" });
                 doc.text("SINDICAL", colSind, ly, { align: "right" });
                 doc.text("PROP. AGUINALDO", colAgui, ly, { align: "right" });
@@ -1729,7 +1753,7 @@
                 ly += 2;
                 doc.line(left, ly, right, ly);
                 ly += 6;
-                doc.setFont("helvetica", "normal"); doc.setFontSize(9);
+                doc.setFont("helvetica", "normal"); doc.setFontSize(8.3);
             }
 
             dibujarEncabezado();
@@ -1747,7 +1771,8 @@
                 doc.setTextColor(20, 20, 20);
                 doc.text(f.nombre, colEmp, ly);
                 doc.text("$ " + fmt(f.neto), colNeto, ly, { align: "right" });
-                doc.text("$ " + fmt(f.aportesYContrib), colSS, ly, { align: "right" });
+                doc.text("$ " + fmt(f.ss), colSS, ly, { align: "right" });
+                doc.text("$ " + fmt(f.os), colOS, ly, { align: "right" });
                 doc.text("$ " + fmt(f.art), colART, ly, { align: "right" });
                 doc.text("$ " + fmt(f.sindical), colSind, ly, { align: "right" });
                 doc.text("$ " + fmt(f.aguinaldoProp), colAgui, ly, { align: "right" });
@@ -1765,17 +1790,18 @@
             }
             doc.setDrawColor(20, 20, 20); doc.setLineWidth(0.4);
             doc.line(left, ly - 4, right, ly - 4);
-            doc.setFont("helvetica", "bold"); doc.setFontSize(9);
+            doc.setFont("helvetica", "bold"); doc.setFontSize(8.3);
             doc.text("TOTALES", colEmp, ly);
             doc.text("$ " + fmt(totalNeto), colNeto, ly, { align: "right" });
-            doc.text("$ " + fmt(totalAportes), colSS, ly, { align: "right" });
+            doc.text("$ " + fmt(totalSS), colSS, ly, { align: "right" });
+            doc.text("$ " + fmt(totalOS), colOS, ly, { align: "right" });
             doc.text("$ " + fmt(totalART), colART, ly, { align: "right" });
             doc.text("$ " + fmt(totalSindical), colSind, ly, { align: "right" });
             doc.text("$ " + fmt(totalAguinaldo), colAgui, ly, { align: "right" });
             doc.text("$ " + fmt(subtotalCostoLaboral), colSub, ly, { align: "right" });
             ly += 14;
 
-            // -------- Resumen de facturación (utilidad + impuestos) --------
+            // -------- Resumen de facturación (utilidad + reserva legal) --------
             if (ly > pageBottom - 45) {
                 doc.addPage();
                 ly = topMargin;
@@ -1790,9 +1816,10 @@
                 ly += big ? 7.5 : 6.5;
             };
             resumenRow("Subtotal costo laboral", subtotalCostoLaboral, false, false);
+            resumenRow("SALUD PUBLICA", totalSaludPublica, false, false);
             resumenRow("ADMINISTRACION", utilidad, false, false);
             resumenRow("Base imponible", baseImpuestos, false, false);
-            resumenRow("Impuestos (21%)", impuestos, false, false);
+            resumenRow("Reserva Legal (2%)", reservaLegal, false, false);
             doc.setDrawColor(20, 20, 20); doc.setLineWidth(0.4);
             doc.line(boxLeft, ly - 4.5, right, ly - 4.5);
             resumenRow("TOTAL A FACTURAR", totalFacturar, true, true);
@@ -1802,7 +1829,7 @@
             if (ly > pageBottom + 10) { doc.addPage(); ly = topMargin; }
             doc.setFont("helvetica", "italic"); doc.setFontSize(7);
             doc.setTextColor(120, 120, 120);
-            const nota = "Jubilación (11%), Ley 19.032 (3%), ART (5,2%) y contribuciones patronales calculados sobre una base fija de 40 horas mensuales por empleado (valor hora de su categoría a jornada completa, tanto para el concepto remunerativo como el no remunerativo), sin importar su jornada real. Cuota sindical (4,5%, solo afiliados) calculada sobre una base fija de media jornada (100 hs mensuales), también sin importar la jornada real. Obra social calculada igual que en el recibo mensual real de cada empleado (con el regrosamiento por jornada reducida cuando corresponde). Proporcional de aguinaldo (remunerativo + no remunerativo del mes ÷ 12) calculado sobre la remuneración real de cada empleado.";
+            const nota = "SS: se parte del aporte exacto de jubilación (11%) y Ley 19.032 (3%) de cada empleado, calculado sobre su remuneración real (igual que en su recibo mensual), y se ajusta según la jornada: jornada completa se divide en 2, tres cuartos de jornada se divide en 3 y se multiplica por 2, media jornada queda sin ajustar. Sobre ese aporte ajustado se suman las contribuciones patronales, llevando el 14% a la alícuota de 17% (aporte ÷ 14 × 17). OS: se parte del importe exacto de obra social (3%) de cada empleado, calculado igual que en su recibo mensual real (con el regrosamiento por jornada reducida cuando corresponde), y se lo multiplica por 3. ART: se toma el valor de OS y se lo divide en 18 y se lo multiplica por 4,7. Cuota sindical (solo afiliados): mismo criterio que ART, se toma el valor de OS y se lo divide en 18 y se lo multiplica por 4. Salud Pública: mismo criterio que ART, se toma el valor de OS de cada empleado y se lo divide en 18 y se lo multiplica por 2,5; se suma como único total (no se desglosa por empleado) antes de administración. Proporcional de aguinaldo (remunerativo + no remunerativo del mes ÷ 12) calculado sobre la remuneración real de cada empleado.";
             const notaLineas = doc.splitTextToSize(nota, right - left);
             doc.text(notaLineas, left, ly);
             doc.setTextColor(20, 20, 20);
@@ -1850,7 +1877,7 @@
             return (
                 <div className="sidebar">
                     <button className={"sidebar-scale-btn" + (vista === "escala" ? " active" : "")} onClick={onVerEscala}>
-                        ⚙ Escala salarial general
+                        ⚙ Escala salarial y período general
                     </button>
                     <button className={"sidebar-scale-btn" + (vista === "webhook" ? " active" : "")} onClick={onVerWebhook}>
                         🔗 Exportar por Webhook (Make)
@@ -1876,7 +1903,7 @@
             );
         }
 
-        function EscalaGeneralView({ escalaGeneral, updateEscalaGeneral }) {
+        function EscalaGeneralView({ escalaGeneral, updateEscalaGeneral, periodoGeneral, updatePeriodoGeneral }) {
             const [catSeleccionada, setCatSeleccionada] = useState(CATEGORIAS[0]);
             const basicos = escalaGeneral.basicos || {};
             const basicoActual = basicos[catSeleccionada] || "";
@@ -1886,10 +1913,40 @@
                 <React.Fragment>
                     <div className="topline">
                         <div>
-                            <h1>Escala salarial general</h1>
+                            <h1>Escala salarial y período general</h1>
                             <div className="sub">Se aplica a todos los empleados, ajustada según su jornada</div>
                         </div>
                         <span className="badge">CCT 130/75</span>
+                    </div>
+                    <div className="card">
+                        <h3>Período de liquidación general</h3>
+                        <div className="grid">
+                            <div className="field">
+                                <label>Período (mes/año)</label>
+                                <input type="month" value={periodoGeneral.periodo}
+                                    onChange={e => {
+                                        const v = e.target.value;
+                                        const [y, m] = v.split("-");
+                                        const meses = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"];
+                                        const label = (y && m) ? `${meses[parseInt(m, 10) - 1]} ${y}` : "";
+                                        updatePeriodoGeneral({ periodo: v, periodoLabel: label });
+                                    }} />
+                            </div>
+                            <div className="field">
+                                <label>Fecha de pago</label>
+                                <input type="date" value={periodoGeneral.fechaPagoRaw || ""}
+                                    onChange={e => {
+                                        const v = e.target.value;
+                                        const d = v ? new Date(v + "T00:00:00").toLocaleDateString('es-AR') : "";
+                                        updatePeriodoGeneral({ fechaPagoRaw: v, fechaPago: d });
+                                    }} />
+                            </div>
+                        </div>
+                        <div className="hint">
+                            Este período y esta fecha de pago se usan por defecto en la liquidación de todos los
+                            empleados. En la pestaña "Liquidación" de cada empleado podés desactivar el período
+                            general para ese caso puntual y cargar un mes o una fecha de pago distinta.
+                        </div>
                     </div>
                     <div className="card">
                         <h3>Básico remunerativo por categoría</h3>
@@ -2096,19 +2153,31 @@
                     <div className="hint">
                         El básico y la asignación no remunerativa se toman por defecto de la "Escala salarial
                         general" (según la categoría de arriba), ajustados por la jornada. Cargá o revisá esos
-                        valores generales desde el botón "⚙ Escala salarial general" en el panel izquierdo.
+                        valores generales desde el botón "⚙ Escala salarial y período general" en el panel
+                        izquierdo.
                     </div>
                 </div>
             );
         }
 
-        function LiquidacionTab({ emp, liq, updateLiq, calc, onGenerarPDF, onGenerarPDFAguinaldo }) {
+        function LiquidacionTab({ emp, liq, updateLiq, calc, periodoGeneral, onGenerarPDF, onGenerarPDFAguinaldo }) {
             const usarEscala = liq.usarEscalaGeneral !== false;
+            const usarPeriodoGeneral = liq.usarPeriodoGeneral !== false;
+            const periodoMostrado = usarPeriodoGeneral ? periodoGeneral.periodo : liq.periodo;
+            const fechaPagoRawMostrada = usarPeriodoGeneral ? (periodoGeneral.fechaPagoRaw || "") : (liq.fechaPagoRaw || "");
             const aguinaldo = calcularAguinaldo(emp, calc, !!liq.aguinaldoIncluirHorasExtra);
             return (
                 <React.Fragment>
                     <div className="card">
                         <h3>Período y conceptos remunerativos</h3>
+                        <div className="field checkbox" style={{ marginBottom: 10 }}>
+                            <input type="checkbox" id="usarPeriodoGeneral" checked={usarPeriodoGeneral}
+                                onChange={e => updateLiq({ usarPeriodoGeneral: e.target.checked })} />
+                            <label htmlFor="usarPeriodoGeneral">
+                                Usar período general (mes y fecha de pago cargados en "Escala salarial y período
+                                general")
+                            </label>
+                        </div>
                         <div className="field checkbox" style={{ marginBottom: 16 }}>
                             <input type="checkbox" id="usarEscala" checked={usarEscala}
                                 onChange={e => updateLiq({ usarEscalaGeneral: e.target.checked })} />
@@ -2120,7 +2189,8 @@
                         <div className="grid">
                             <div className="field">
                                 <label>Período (mes/año)</label>
-                                <input type="month" value={liq.periodo}
+                                <input type="month" value={periodoMostrado}
+                                    disabled={usarPeriodoGeneral}
                                     onChange={e => {
                                         const v = e.target.value;
                                         const [y, m] = v.split("-");
@@ -2128,15 +2198,18 @@
                                         const label = (y && m) ? `${meses[parseInt(m, 10) - 1]} ${y}` : "";
                                         updateLiq({ periodo: v, periodoLabel: label });
                                     }} />
+                                {usarPeriodoGeneral && <div className="hint">Tomado del período general.</div>}
                             </div>
                             <div className="field">
                                 <label>Fecha de pago</label>
-                                <input type="date" value={liq.fechaPagoRaw || ""}
+                                <input type="date" value={fechaPagoRawMostrada}
+                                    disabled={usarPeriodoGeneral}
                                     onChange={e => {
                                         const v = e.target.value;
                                         const d = v ? new Date(v + "T00:00:00").toLocaleDateString('es-AR') : "";
                                         updateLiq({ fechaPagoRaw: v, fechaPago: d });
                                     }} />
+                                {usarPeriodoGeneral && <div className="hint">Tomada del período general.</div>}
                             </div>
                             <div className="field">
                                 <label>Sueldo básico ($)</label>
@@ -2415,6 +2488,7 @@
         function defaultLiq() {
             return {
                 periodo: "", periodoLabel: "", fechaPago: "", fechaPagoRaw: "",
+                usarPeriodoGeneral: true,
                 usarEscalaGeneral: true,
                 basico: "", antigPctPorAnio: "1", horasExtra50: "", horasExtra100: "",
                 otrosRemunerativos: "", otrosRemunerativosConcepto: "",
@@ -2438,6 +2512,7 @@
             const [tab, setTab] = useState("datos");
             const [liqPorEmpleado, setLiqPorEmpleado] = useState({});
             const [escalaGeneral, setEscalaGeneral] = useState(defaultEscalaGeneral());
+            const [periodoGeneral, setPeriodoGeneral] = useState(defaultPeriodoGeneral());
             const [vista, setVista] = useState("empleado"); // "empleado" | "escala" | "webhook"
             const [webhookUrl, setWebhookUrl] = useState("");
             const [webhookEnviando, setWebhookEnviando] = useState(false);
@@ -2447,11 +2522,12 @@
 
             const emp = empleados.find(e => e.id === selectedId) || null;
             const liq = emp ? (liqPorEmpleado[emp.id] || defaultLiq()) : defaultLiq();
+            const liqResuelto = useMemo(() => resolverLiq(liq, periodoGeneral), [liq, periodoGeneral]);
 
             const calc = useMemo(() => emp
-                ? calcularLiquidacion(emp, liq, escalaGeneral)
+                ? calcularLiquidacion(emp, liqResuelto, escalaGeneral)
                 : calcularLiquidacion({}, defaultLiq(), escalaGeneral),
-                [emp, liq, escalaGeneral]);
+                [emp, liqResuelto, escalaGeneral]);
 
             function mostrarToast(msg) {
                 setToast(msg);
@@ -2481,6 +2557,10 @@
                 setEscalaGeneral({ ...escalaGeneral, ...patch });
             }
 
+            function updatePeriodoGeneral(patch) {
+                setPeriodoGeneral({ ...periodoGeneral, ...patch });
+            }
+
             function borrarEmpleado(id) {
                 if (!confirm("¿Eliminar este empleado y su liquidación cargada?")) return;
                 setEmpleados(empleados.filter(e => e.id !== id));
@@ -2488,20 +2568,20 @@
             }
 
             function onGenerarPDF() {
-                if (!emp.nombre || !liq.periodo || (!calc.usarEscala && !liq.basico) || (calc.usarEscala && !emp.categoria)) {
+                if (!emp.nombre || !liqResuelto.periodo || (!calc.usarEscala && !liqResuelto.basico) || (calc.usarEscala && !emp.categoria)) {
                     mostrarToast("Completá al menos nombre, categoría/período o sueldo básico antes de emitir el recibo.");
                     return;
                 }
-                generarPDF(empresa, emp, liq, calc);
+                generarPDF(empresa, emp, liqResuelto, calc);
                 mostrarToast("Recibo generado y descargado ✓");
             }
 
             function onGenerarPDFAguinaldo(aguinaldo) {
-                if (!emp.nombre || !liq.periodo) {
+                if (!emp.nombre || !liqResuelto.periodo) {
                     mostrarToast("Completá al menos nombre y período antes de emitir el aguinaldo.");
                     return;
                 }
-                generarPDFAguinaldo(empresa, emp, liq, calc, aguinaldo);
+                generarPDFAguinaldo(empresa, emp, liqResuelto, calc, aguinaldo);
                 mostrarToast("PDF de aguinaldo generado y descargado ✓");
             }
 
@@ -2512,7 +2592,7 @@
                 }
                 const empleadosConLiq = empleados.map(e => ({
                     emp: e,
-                    liq: liqPorEmpleado[e.id] || defaultLiq()
+                    liq: resolverLiq(liqPorEmpleado[e.id] || defaultLiq(), periodoGeneral)
                 }));
                 generarPDFTodos(empresa, empleadosConLiq, escalaGeneral);
                 mostrarToast(`PDF con ${empleadosConLiq.length} recibo(s) generado ✓`);
@@ -2525,7 +2605,7 @@
                 }
                 const empleadosConLiq = empleados.map(e => ({
                     emp: e,
-                    liq: liqPorEmpleado[e.id] || defaultLiq()
+                    liq: resolverLiq(liqPorEmpleado[e.id] || defaultLiq(), periodoGeneral)
                 }));
                 generarPDFAguinaldoTodos(empresa, empleadosConLiq, escalaGeneral);
                 mostrarToast(`PDF de aguinaldos con ${empleadosConLiq.length} empleado(s) generado ✓`);
@@ -2540,7 +2620,7 @@
                     .filter(e => !CUILS_EXCLUIDOS_REPORTES.includes(soloDigitosCuil(e.cuil)))
                     .map(e => ({
                         emp: e,
-                        liq: liqPorEmpleado[e.id] || defaultLiq()
+                        liq: resolverLiq(liqPorEmpleado[e.id] || defaultLiq(), periodoGeneral)
                     }));
                 generarPDFPlanillaNetos(empresa, empleadosConLiq, escalaGeneral);
                 mostrarToast(`Planilla de netos con ${empleadosConLiq.length} empleado(s) generada ✓`);
@@ -2555,7 +2635,7 @@
                     .filter(e => !CUILS_EXCLUIDOS_REPORTES.includes(soloDigitosCuil(e.cuil)))
                     .map(e => ({
                         emp: e,
-                        liq: liqPorEmpleado[e.id] || defaultLiq()
+                        liq: resolverLiq(liqPorEmpleado[e.id] || defaultLiq(), periodoGeneral)
                     }));
                 generarPDFCosteoServicio(empresa, empleadosConLiq, escalaGeneral);
                 mostrarToast(`Costeo del servicio con ${empleadosConLiq.length} empleado(s) generado ✓`);
@@ -2591,7 +2671,7 @@
                 setWebhookLog([]);
                 const resultados = [];
                 for (const e of empleados) {
-                    const l = liqPorEmpleado[e.id] || defaultLiq();
+                    const l = resolverLiq(liqPorEmpleado[e.id] || defaultLiq(), periodoGeneral);
                     const c = calcularLiquidacion(e, l, escalaGeneral);
                     const payload = construirPayloadEmpleado(empresa, e, l, c);
                     const r = await enviarWebhook(webhookUrl, payload);
@@ -2605,7 +2685,7 @@
             }
 
             function exportarJSON() {
-                const data = { empresa, empleados, liqPorEmpleado, escalaGeneral, webhookUrl };
+                const data = { empresa, empleados, liqPorEmpleado, escalaGeneral, periodoGeneral, webhookUrl };
                 const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement("a");
@@ -2625,6 +2705,7 @@
                         if (data.empleados) setEmpleados(data.empleados);
                         if (data.liqPorEmpleado) setLiqPorEmpleado(data.liqPorEmpleado);
                         if (data.escalaGeneral) setEscalaGeneral({ ...defaultEscalaGeneral(), ...data.escalaGeneral });
+                        if (data.periodoGeneral) setPeriodoGeneral({ ...defaultPeriodoGeneral(), ...data.periodoGeneral });
                         if (data.webhookUrl) setWebhookUrl(data.webhookUrl);
                         mostrarToast("Datos importados ✓");
                     } catch (err) {
@@ -2646,7 +2727,8 @@
                             onVerWebhook={() => setVista("webhook")} />
                         <div className="main">
                             {vista === "escala" && (
-                                <EscalaGeneralView escalaGeneral={escalaGeneral} updateEscalaGeneral={updateEscalaGeneral} />
+                                <EscalaGeneralView escalaGeneral={escalaGeneral} updateEscalaGeneral={updateEscalaGeneral}
+                                    periodoGeneral={periodoGeneral} updatePeriodoGeneral={updatePeriodoGeneral} />
                             )}
                             {vista === "webhook" && (
                                 <WebhookView webhookUrl={webhookUrl} setWebhookUrl={setWebhookUrl}
@@ -2673,8 +2755,8 @@
                                         <div className={"tab" + (tab === "vista" ? " active" : "")} onClick={() => setTab("vista")}>Vista previa del recibo</div>
                                     </div>
                                     {tab === "datos" && <DatosTab emp={emp} updateEmp={updateEmp} />}
-                                    {tab === "liquidacion" && <LiquidacionTab emp={emp} liq={liq} updateLiq={updateLiq} calc={calc} onGenerarPDF={onGenerarPDF} onGenerarPDFAguinaldo={onGenerarPDFAguinaldo} />}
-                                    {tab === "vista" && <VistaPreviaTab empresa={empresa} emp={emp} liq={liq} calc={calc} />}
+                                    {tab === "liquidacion" && <LiquidacionTab emp={emp} liq={liq} updateLiq={updateLiq} calc={calc} periodoGeneral={periodoGeneral} onGenerarPDF={onGenerarPDF} onGenerarPDFAguinaldo={onGenerarPDFAguinaldo} />}
+                                    {tab === "vista" && <VistaPreviaTab empresa={empresa} emp={emp} liq={liqResuelto} calc={calc} />}
                                 </React.Fragment>
                             )}
                         </div>
