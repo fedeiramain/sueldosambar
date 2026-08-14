@@ -1632,16 +1632,16 @@
         // PDF de costeo del servicio: por cada empleado informa el neto a
         // cobrar, el total de aportes + contribuciones patronales (la parte
         // de seguridad social, calculada como si el empleado trabajase
-        // jornada completa —40 hs— sin importar su situación de revista
+        // jornada completa —100 hs— sin importar su situación de revista
         // real), la cuota sindical por separado y el proporcional mensual
         // de aguinaldo. Al pie suma todo, aplica una utilidad del 10% y
-        // sobre ese total calcula el 2% de reserva legal, hasta el total a
+        // sobre ese total calcula el 21% de impuestos, hasta el total a
         // facturar.
         //
         // Criterios aplicados (quedan también aclarados al pie del PDF):
         // - Aportes (jubilación 11% + Ley 19.032 3% + obra social 3%) y
         //   contribuciones patronales: recalculados sobre una base de
-        //   jornada completa (40 hs) para cada empleado, independientemente
+        //   jornada completa (100 hs) para cada empleado, independientemente
         //   de si su jornada real es completa, 3/4 o media.
         // - Cuota sindical y proporcional de aguinaldo: sobre la
         //   remuneración real de cada empleado (no se llevan a 40 hs).
@@ -1653,77 +1653,79 @@
 
             const left = 14, right = 283;
             const colEmp = left;
-            const colNeto = 104, colSS = 132, colOS = 160, colART = 188, colSind = 216, colAgui = 250, colSub = right;
+            const colNeto = 120, colSS = 153, colART = 186, colSind = 219, colAgui = 252, colSub = right;
             const rowH = 8;
             const topMargin = 18;
             const pageBottom = 192; // A4 landscape: 210mm de alto, con margen
             let periodoRef = "";
 
+            // Horas mensuales tomadas como base fija para aportes,
+            // contribuciones y ART (seguridad social), sin importar la
+            // jornada real del empleado (200 hs/mes en jornada completa,
+            // 100 hs/mes en media jornada, etc. — siempre se usan estas 40).
+            const HORAS_BASE_SS = 100;
+            const ART_PCT = 0.052;
+            // La cuota sindical, en cambio, se calcula considerando a todos
+            // los empleados como si fueran de media jornada (100 hs/mes),
+            // sin importar su jornada real.
+            const HORAS_BASE_SINDICAL = 200;
+
             const filas = empleadosConLiq.map(({ emp, liq }) => {
                 const calc = calcularLiquidacion(emp, liq, escalaGeneral);
                 if (!periodoRef) periodoRef = liq.periodoLabel || liq.periodo || "";
 
-                // SS: se parte del aporte EXACTO de cada empleado — jubilación
-                // (11%) + Ley 19.032 (3%), tal como los calcula la liquidación
-                // real (calc.jubilacion / calc.ley19032, sobre su remuneración
-                // total real: básico, antigüedad, horas extra, presentismo,
-                // etc.) — y se lo ajusta según la jornada:
-                // - Jornada completa: el aporte se divide en 2.
-                // - Tres cuartos de jornada: el aporte se divide en 3 y se
-                //   multiplica por 2.
-                // - Media jornada: el aporte queda sin ajustar.
-                // Sobre ese aporte ya ajustado se calculan las contribuciones
-                // patronales, llevando el 14% (11% + 3%) a la alícuota de 17%:
-                // aporte ÷ 14 × 17.
-                let aporte = calc.jubilacion + calc.ley19032;
-                if (calc.jornada === "COMPLETA") {
-                    aporte = aporte / 2;
-                } else if (calc.jornada === "TRES_CUARTOS") {
-                    aporte = aporte / 3 * 2;
-                }
-                const contribuciones = aporte / 14 * 17;
-                const ss = aporte + contribuciones;
-                // OS: se parte del importe EXACTO de obra social de cada
-                // empleado (calc.obraSocial, calculado igual que en su recibo
-                // real, con el regrosamiento por jornada reducida cuando
-                // corresponde) y se lo multiplica por 3.
-                const os = calc.obraSocial * 3;
+                // Básico y no remunerativo a jornada completa (200 hs/mes),
+                // independiente de la jornada real del empleado: si usa la
+                // escala general, salen directo de la escala; si están
+                // cargados a mano para una jornada reducida, se llevan a
+                // jornada completa dividiendo por la fracción de esa jornada.
+                const usaEscala = liq.usarEscalaGeneral !== false;
+                const basicoJornadaCompleta = usaEscala
+                    ? (parseFloat((escalaGeneral.basicos || {})[emp.categoria]) || 0)
+                    : (parseFloat(liq.basico) || 0) / (calc.fraccion || 1);
+                const noRemunJornadaCompleta = usaEscala
+                    ? (parseFloat(escalaGeneral.noRemunerativo) || 0)
+                    : (parseFloat(liq.noRemunerativos) || 0) / (calc.fraccion || 1);
 
-                // ART: se toma el valor de OS ya calculado arriba y se lo
-                // divide en 18 y se lo multiplica por 4,7.
-                const art = os / 18 * 4.7;
+                const valorHoraCompleta = basicoJornadaCompleta > 0 ? basicoJornadaCompleta / 200 : 0;
+                const valorHoraNoRemunCompleta = noRemunJornadaCompleta > 0 ? noRemunJornadaCompleta / 200 : 0;
+                const baseAportesSS = valorHoraCompleta * HORAS_BASE_SS;
+                const baseNoRemunSS = valorHoraNoRemunCompleta * HORAS_BASE_SS;
 
-                // Cuota sindical: mismo criterio que ART — se toma el valor
-                // de OS y se lo divide en 18 y se lo multiplica por 4 — solo
-                // para empleados afiliados al sindicato.
-                const sindical = emp.afiliadoSindicato ? (os / 18 * 4) : 0;
+                const contribPatronalesPct = parseFloat(escalaGeneral.contribucionesPatronalesPct) || 0;
+                const aportesYContrib = baseAportesSS * 0.11   // jubilación (base 100 hs)
+                    + baseAportesSS * 0.03                     // Ley 19.032 (base 100 hs)
+                    + calc.obraSocial                          // obra social: igual que en el recibo real
+                    + baseAportesSS * contribPatronalesPct / 100; // contribuciones patronales (base 40 hs)
 
-                // Salud Pública: mismo criterio que ART — se toma el valor
-                // de OS y se lo divide en 18 y se lo multiplica por 2,5. No
-                // se muestra por empleado en la tabla, solo se suma para el
-                // resumen de facturación (antes de administración).
-                const saludPublica = os / 18 * 2.5;
+                // ART 5,2%, sobre remunerativo y no remunerativo, ambos
+                // proporcionales a la base fija de 40 hs.
+                const art = (baseAportesSS + baseNoRemunSS) * ART_PCT;
+
+                // Cuota sindical 4,5%, sobre remunerativo y no remunerativo,
+                // ambos proporcionales a la base fija de media jornada
+                // (100 hs), para todos los empleados por igual.
+                const baseSindicalRemun = valorHoraCompleta * HORAS_BASE_SINDICAL;
+                const baseSindicalNoRemun = valorHoraNoRemunCompleta * HORAS_BASE_SINDICAL;
+                const sindical = emp.afiliadoSindicato ? (baseSindicalRemun + baseSindicalNoRemun) * 0.045 : 0;
 
                 const aguinaldoProp = (calc.totalRemunerativo + calc.noRemunerativo) / 12;
-                const subtotal = calc.neto + ss + os + art + sindical + aguinaldoProp;
+                const subtotal = calc.neto + aportesYContrib + art + sindical + aguinaldoProp;
 
-                return { nombre: emp.nombre || "(sin nombre)", neto: calc.neto, ss, os, art, sindical, aguinaldoProp, subtotal, saludPublica };
+                return { nombre: emp.nombre || "(sin nombre)", neto: calc.neto, aportesYContrib, art, sindical, aguinaldoProp, subtotal };
             });
 
             const sum = (key) => filas.reduce((acc, f) => acc + (f[key] || 0), 0);
             const totalNeto = sum("neto");
-            const totalSS = sum("ss");
-            const totalOS = sum("os");
+            const totalAportes = sum("aportesYContrib");
             const totalART = sum("art");
             const totalSindical = sum("sindical");
             const totalAguinaldo = sum("aguinaldoProp");
             const subtotalCostoLaboral = sum("subtotal");
-            const totalSaludPublica = sum("saludPublica");
-            const baseConSalud = subtotalCostoLaboral + totalSaludPublica;
-            const utilidad = baseConSalud * 0.10;
-            const baseImpuestos = baseConSalud + utilidad;
-            const reservaLegal = baseImpuestos * 0.02;
-            const totalFacturar = baseImpuestos + reservaLegal;
+            const adm = subtotalCostoLaboral * 0.10;
+            const baseUtilidad = subtotalCostoLaboral + adm;
+            const utilidad = baseUtilidad * 0.3;
+            const totalFacturar = baseUtilidad + utilidad;
 
             let ly = topMargin;
 
@@ -1741,11 +1743,10 @@
                 ly += 8;
 
                 doc.setDrawColor(20, 20, 20); doc.setLineWidth(0.3);
-                doc.setFont("helvetica", "bold"); doc.setFontSize(7.5);
+                doc.setFont("helvetica", "bold"); doc.setFontSize(8);
                 doc.text("EMPLEADO", colEmp, ly);
                 doc.text("NETO A COBRAR", colNeto, ly, { align: "right" });
-                doc.text("SS", colSS, ly, { align: "right" });
-                doc.text("OS", colOS, ly, { align: "right" });
+                doc.text("SS + OS", colSS, ly, { align: "right" });
                 doc.text("ART (5,2%)", colART, ly, { align: "right" });
                 doc.text("SINDICAL", colSind, ly, { align: "right" });
                 doc.text("PROP. AGUINALDO", colAgui, ly, { align: "right" });
@@ -1753,7 +1754,7 @@
                 ly += 2;
                 doc.line(left, ly, right, ly);
                 ly += 6;
-                doc.setFont("helvetica", "normal"); doc.setFontSize(8.3);
+                doc.setFont("helvetica", "normal"); doc.setFontSize(9);
             }
 
             dibujarEncabezado();
@@ -1771,8 +1772,7 @@
                 doc.setTextColor(20, 20, 20);
                 doc.text(f.nombre, colEmp, ly);
                 doc.text("$ " + fmt(f.neto), colNeto, ly, { align: "right" });
-                doc.text("$ " + fmt(f.ss), colSS, ly, { align: "right" });
-                doc.text("$ " + fmt(f.os), colOS, ly, { align: "right" });
+                doc.text("$ " + fmt(f.aportesYContrib), colSS, ly, { align: "right" });
                 doc.text("$ " + fmt(f.art), colART, ly, { align: "right" });
                 doc.text("$ " + fmt(f.sindical), colSind, ly, { align: "right" });
                 doc.text("$ " + fmt(f.aguinaldoProp), colAgui, ly, { align: "right" });
@@ -1790,18 +1790,17 @@
             }
             doc.setDrawColor(20, 20, 20); doc.setLineWidth(0.4);
             doc.line(left, ly - 4, right, ly - 4);
-            doc.setFont("helvetica", "bold"); doc.setFontSize(8.3);
+            doc.setFont("helvetica", "bold"); doc.setFontSize(9);
             doc.text("TOTALES", colEmp, ly);
             doc.text("$ " + fmt(totalNeto), colNeto, ly, { align: "right" });
-            doc.text("$ " + fmt(totalSS), colSS, ly, { align: "right" });
-            doc.text("$ " + fmt(totalOS), colOS, ly, { align: "right" });
+            doc.text("$ " + fmt(totalAportes), colSS, ly, { align: "right" });
             doc.text("$ " + fmt(totalART), colART, ly, { align: "right" });
             doc.text("$ " + fmt(totalSindical), colSind, ly, { align: "right" });
             doc.text("$ " + fmt(totalAguinaldo), colAgui, ly, { align: "right" });
             doc.text("$ " + fmt(subtotalCostoLaboral), colSub, ly, { align: "right" });
             ly += 14;
 
-            // -------- Resumen de facturación (utilidad + reserva legal) --------
+            // -------- Resumen de facturación (utilidad + impuestos) --------
             if (ly > pageBottom - 45) {
                 doc.addPage();
                 ly = topMargin;
@@ -1816,10 +1815,9 @@
                 ly += big ? 7.5 : 6.5;
             };
             resumenRow("Subtotal costo laboral", subtotalCostoLaboral, false, false);
-            resumenRow("SALUD PUBLICA", totalSaludPublica, false, false);
-            resumenRow("ADMINISTRACION", utilidad, false, false);
-            resumenRow("Base imponible", baseImpuestos, false, false);
-            resumenRow("Reserva Legal (2%)", reservaLegal, false, false);
+            resumenRow("ADMINISTRACION", adm, false, false);
+            resumenRow("Base imponible", baseUtilidad, false, false);
+            resumenRow("Utilidad", utilidad, false, false);
             doc.setDrawColor(20, 20, 20); doc.setLineWidth(0.4);
             doc.line(boxLeft, ly - 4.5, right, ly - 4.5);
             resumenRow("TOTAL A FACTURAR", totalFacturar, true, true);
@@ -1829,7 +1827,7 @@
             if (ly > pageBottom + 10) { doc.addPage(); ly = topMargin; }
             doc.setFont("helvetica", "italic"); doc.setFontSize(7);
             doc.setTextColor(120, 120, 120);
-            const nota = "SS: se parte del aporte exacto de jubilación (11%) y Ley 19.032 (3%) de cada empleado, calculado sobre su remuneración real (igual que en su recibo mensual), y se ajusta según la jornada: jornada completa se divide en 2, tres cuartos de jornada se divide en 3 y se multiplica por 2, media jornada queda sin ajustar. Sobre ese aporte ajustado se suman las contribuciones patronales, llevando el 14% a la alícuota de 17% (aporte ÷ 14 × 17). OS: se parte del importe exacto de obra social (3%) de cada empleado, calculado igual que en su recibo mensual real (con el regrosamiento por jornada reducida cuando corresponde), y se lo multiplica por 3. ART: se toma el valor de OS y se lo divide en 18 y se lo multiplica por 4,7. Cuota sindical (solo afiliados): mismo criterio que ART, se toma el valor de OS y se lo divide en 18 y se lo multiplica por 4. Salud Pública: mismo criterio que ART, se toma el valor de OS de cada empleado y se lo divide en 18 y se lo multiplica por 2,5; se suma como único total (no se desglosa por empleado) antes de administración. Proporcional de aguinaldo (remunerativo + no remunerativo del mes ÷ 12) calculado sobre la remuneración real de cada empleado.";
+            const nota = "Jubilación (11%), Ley 19.032 (3%), ART (5,2%) y contribuciones patronales calculados sobre una base fija de 40 horas mensuales por empleado (valor hora de su categoría a jornada completa, tanto para el concepto remunerativo como el no remunerativo), sin importar su jornada real. Cuota sindical (4,5%, solo afiliados) calculada sobre una base fija de media jornada (100 hs mensuales), también sin importar la jornada real. Obra social calculada igual que en el recibo mensual real de cada empleado (con el regrosamiento por jornada reducida cuando corresponde). Proporcional de aguinaldo (remunerativo + no remunerativo del mes ÷ 12) calculado sobre la remuneración real de cada empleado.";
             const notaLineas = doc.splitTextToSize(nota, right - left);
             doc.text(notaLineas, left, ly);
             doc.setTextColor(20, 20, 20);
