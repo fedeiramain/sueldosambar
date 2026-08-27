@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="es">
 
@@ -828,8 +827,21 @@
             MEDIA: "Media jornada",
         };
 
+        // Horas mensuales "base" de cada jornada, usadas para calcular el
+        // valor hora de las inasistencias (distinto del valor hora de las
+        // horas extra, que siempre se calcula sobre 200 hs).
+        const JORNADA_HORAS_BASE = {
+            COMPLETA: 200,
+            TRES_CUARTOS: 140,
+            MEDIA: 100,
+        };
+
         function fraccionJornada(jornada) {
             return JORNADA_FRACCION[jornada] !== undefined ? JORNADA_FRACCION[jornada] : 1;
+        }
+
+        function horasBaseJornada(jornada) {
+            return JORNADA_HORAS_BASE[jornada] !== undefined ? JORNADA_HORAS_BASE[jornada] : 200;
         }
 
         function defaultEscalaGeneral() {
@@ -950,6 +962,24 @@
             const he50 = (parseFloat(liq.horasExtra50) || 0) * valorHora * 1.5;
             const he100 = (parseFloat(liq.horasExtra100) || 0) * valorHora * 2;
 
+            // Inasistencias: se cargan en cantidad de horas y se descuentan del
+            // básico. El valor hora de la inasistencia se calcula sobre las
+            // horas mensuales "base" de la jornada del empleado (200 hs jornada
+            // completa, 140 hs tres cuartos, 100 hs media jornada), a diferencia
+            // del valor hora de las horas extra (que siempre usa 200).
+            const horasBaseInasistencia = horasBaseJornada(jornada);
+            const baseInasistencia = basico + antigMonto;
+
+            const valorHoraInasistencia =
+                baseInasistencia > 0
+                    ? baseInasistencia / horasBaseInasistencia
+                    : 0;
+
+            const horasInasistencia = parseFloat(liq.horasInasistencia) || 0;
+
+            const inasistenciasMonto =
+                horasInasistencia * valorHoraInasistencia;
+
             // Plus vacacional (Art. 155 LCT): se carga solo la cantidad de días
             // de vacaciones y el monto se calcula solo, igual que las horas
             // extra (básico ÷ 25 × días), sin necesidad de tipear el importe.
@@ -960,7 +990,7 @@
 
             const otrosRemun = parseFloat(liq.otrosRemunerativos) || 0;
 
-            const brutoParaPresentismo = basico + antigMonto + he50 + he100 + plusVacacional + otrosRemun;
+            const brutoParaPresentismo = basico + antigMonto + he50 + he100 + plusVacacional + otrosRemun - inasistenciasMonto;
             const presentismoMonto = liq.presentismo ? brutoParaPresentismo * 0.0833 : 0;
 
             const totalRemunerativo = brutoParaPresentismo + presentismoMonto;
@@ -1015,6 +1045,7 @@
             return {
                 jornada, fraccion, usarEscala, basico, basicoEscala, noRemEscala,
                 aniosAntig, antigPct, antigMonto, valorHora, he50, he100,
+                horasBaseInasistencia, valorHoraInasistencia, horasInasistencia, inasistenciasMonto,
                 valorDiaVacaciones, diasVacaciones, plusVacacional, otrosRemun,
                 presentismoMonto, totalRemunerativo,
                 noRemunerativoBase, antigNoRemunMonto, presentismoNoRemunMonto, noRemunerativo,
@@ -1091,6 +1122,8 @@
                 presentismo_monto: n(calc.presentismoMonto),
                 horas_extra_50: n(calc.he50),
                 horas_extra_100: n(calc.he100),
+                horas_inasistencia: n(calc.horasInasistencia),
+                inasistencias_monto: n(calc.inasistenciasMonto),
                 plus_vacacional_dias: n(calc.diasVacaciones),
                 plus_vacacional_monto: n(calc.plusVacacional),
                 otras_remuneraciones_concepto: liq.otrosRemunerativosConcepto || "",
@@ -1216,6 +1249,7 @@
                     ["Antigüedad", calc.antigMonto, 0, 0],
                     ["Presentismo", calc.presentismoMonto, 0, 0],
                     ["Horas extra", (calc.he50 || 0) + (calc.he100 || 0), 0, 0],
+                    [`Inasistencias (${calc.horasInasistencia || 0} hs)`, -(calc.inasistenciasMonto || 0), 0, 0],
                     [`Plus vacacional (${calc.diasVacaciones || 0} día/s)`, calc.plusVacacional, 0, 0],
                     [liq.otrosRemunerativosConcepto || "Otras remuneraciones", calc.otrosRemun, 0, 0],
                     [liq.noRemunerativosConcepto || "Asignación no remunerativa", 0, calc.noRemunerativoBase, 0],
@@ -2069,6 +2103,7 @@
                             empresa_razonSocial, empresa_cuit, empleado_nombre, empleado_cuil, empleado_legajo,
                             categoria, jornada, fecha_ingreso, periodo, fecha_pago, basico, antiguedad_pct,
                             antiguedad_monto, presentismo_monto, horas_extra_50, horas_extra_100,
+                            horas_inasistencia, inasistencias_monto,
                             otras_remuneraciones_concepto, otras_remuneraciones_monto, no_remunerativo_concepto,
                             no_remunerativo_base, no_remunerativo_antiguedad, no_remunerativo_presentismo,
                             no_remunerativo_total, jubilacion, ley_19032, obra_social, cuota_sindical,
@@ -2230,6 +2265,13 @@
                                 <input type="text" value={liq.horasExtra100} onChange={e => updateLiq({ horasExtra100: e.target.value })} />
                             </div>
                             <div className="field">
+                                <label>Inasistencias (cantidad de hs.)</label>
+                                <input type="text" value={liq.horasInasistencia} onChange={e => updateLiq({ horasInasistencia: e.target.value })} />
+                                <div className="hint">
+                                    Valor hora: básico ÷ {calc.horasBaseInasistencia} hs ({JORNADA_LABEL[calc.jornada] || "jornada completa"}).
+                                </div>
+                            </div>
+                            <div className="field">
                                 <label>Plus vacacional (cantidad de días)</label>
                                 <input type="text" min="0" value={liq.diasVacaciones} onChange={e => updateLiq({ diasVacaciones: e.target.value })} />
                             </div>
@@ -2244,11 +2286,13 @@
                             </div>
                         </div>
                         <div className="hint">
-                            Valor hora = básico ÷ 200. Las horas extra se calculan solas: cantidad de horas ×
-                            valor hora × 1,5 (al 50%) o × 2 (al 100%). El plus vacacional (Art. 155 LCT) funciona
-                            igual: valor día = básico ÷ 25, y el monto sale solo al cargar la cantidad de días de
-                            vacaciones que le corresponden al empleado. No hace falta cargar ningún importe en
-                            pesos a mano, solo las cantidades.
+                            Valor hora (horas extra) = básico ÷ 200. Las horas extra se calculan solas: cantidad
+                            de horas × valor hora × 1,5 (al 50%) o × 2 (al 100%). Las inasistencias usan un valor
+                            hora propio, según la jornada del empleado: básico ÷ 200 hs (jornada completa), ÷ 140
+                            hs (tres cuartos) o ÷ 100 hs (media jornada), y se descuentan del básico. El plus
+                            vacacional (Art. 155 LCT) funciona igual que las horas extra: valor día = básico ÷ 25,
+                            y el monto sale solo al cargar la cantidad de días de vacaciones que le corresponden
+                            al empleado. No hace falta cargar ningún importe en pesos a mano, solo las cantidades.
                         </div>
                         <div className="field checkbox">
                             <input type="checkbox" id="presentismo" checked={liq.presentismo}
@@ -2302,6 +2346,7 @@
                                 <tr><td className="label">Presentismo</td><td className="amount">$ {fmt(calc.presentismoMonto)}</td></tr>
                                 <tr><td className="label">Horas extra 50%</td><td className="amount">$ {fmt(calc.he50)}</td></tr>
                                 <tr><td className="label">Horas extra 100%</td><td className="amount">$ {fmt(calc.he100)}</td></tr>
+                                <tr><td className="label">Inasistencias ({calc.horasInasistencia || 0} hs)</td><td className="amount">$ -{fmt(calc.inasistenciasMonto)}</td></tr>
                                 <tr><td className="label">Plus vacacional ({calc.diasVacaciones} día/s)</td><td className="amount">$ {fmt(calc.plusVacacional)}</td></tr>
                                 <tr><td className="label">Otras remuneraciones</td><td className="amount">$ {fmt(calc.otrosRemun)}</td></tr>
                                 <tr><td className="label">Asignación no remunerativa</td><td className="amount">$ {fmt(calc.noRemunerativoBase)}</td></tr>
@@ -2423,6 +2468,7 @@
                                 {calc.presentismoMonto > 0 && <tr><td>Presentismo</td><td className="num">$ {fmt(calc.presentismoMonto)}</td><td className="num"></td><td className="num"></td></tr>}
                                 {calc.he50 > 0 && <tr><td>Horas extra 50%</td><td className="num">$ {fmt(calc.he50)}</td><td className="num"></td><td className="num"></td></tr>}
                                 {calc.he100 > 0 && <tr><td>Horas extra 100%</td><td className="num">$ {fmt(calc.he100)}</td><td className="num"></td><td className="num"></td></tr>}
+                                {calc.inasistenciasMonto > 0 && <tr><td>Inasistencias ({calc.horasInasistencia} hs)</td><td className="num">$ -{fmt(calc.inasistenciasMonto)}</td><td className="num"></td><td className="num"></td></tr>}
                                 {calc.plusVacacional > 0 && <tr><td>Plus vacacional ({calc.diasVacaciones} día/s)</td><td className="num">$ {fmt(calc.plusVacacional)}</td><td className="num"></td><td className="num"></td></tr>}
                                 {calc.otrosRemun > 0 && <tr><td>{liq.otrosRemunerativosConcepto || "Otras remuneraciones"}</td><td className="num">$ {fmt(calc.otrosRemun)}</td><td className="num"></td><td className="num"></td></tr>}
                                 {calc.noRemunerativoBase > 0 && <tr><td>{liq.noRemunerativosConcepto || "Asig. no remunerativa"}</td><td className="num"></td><td className="num">$ {fmt(calc.noRemunerativoBase)}</td><td className="num"></td></tr>}
@@ -2489,6 +2535,7 @@
                 usarPeriodoGeneral: true,
                 usarEscalaGeneral: true,
                 basico: "", antigPctPorAnio: "1", horasExtra50: "", horasExtra100: "",
+                horasInasistencia: "",
                 otrosRemunerativos: "", otrosRemunerativosConcepto: "",
                 presentismo: false,
                 noRemunerativos: "", noRemunerativosConcepto: "",
