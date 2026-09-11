@@ -1,3 +1,4 @@
+
 <!DOCTYPE html>
 <html lang="es">
 
@@ -852,6 +853,10 @@
                 noRemunerativo: "",
                 noRemunerativoConcepto: "Asignación no remunerativa (paritaria)",
                 contribucionesPatronalesPct: "",
+                svcvoMonto: "",
+                contribSSPct: "18",
+                contribOSPct: "6",
+                contribARTPct: "4",
             };
         }
 
@@ -1042,6 +1047,31 @@
             const contribPatronalesPct = parseFloat(escalaGeneral.contribucionesPatronalesPct) || 0;
             const contribucionesPatronales = (totalRemunerativo + noRemunerativo) * contribPatronalesPct / 100;
 
+            // Desglose de contribuciones patronales que se muestra en el
+            // recibo de sueldo (Sección II, art. 140 LCT — Decreto 407/2026,
+            // Anexo III): Cont. Seguridad Social (SIPA) sobre la base
+            // remunerativa, Cont. Obra Social/PAMI y A.R.T. sobre
+            // remunerativo + no remunerativo, y SVCVO (Seguro de Vida
+            // Colectivo Obligatorio, importe fijo por trabajador cargado en
+            // la Escala salarial general). Los % son editables en la Escala
+            // general porque varían según la alícuota real declarada por
+            // cada empleador — acá solo se usa 18/6/4% como valor por
+            // defecto si no se cargó nada. El Costo laboral total suma la
+            // remuneración total (bruto) más estos cuatro conceptos.
+            const pctOrDefault = (v, def) => {
+                const p = parseFloat(v);
+                return isNaN(p) ? def : p;
+            };
+            const contribSSPct = pctOrDefault(escalaGeneral.contribSSPct, 18);
+            const contribOSPct = pctOrDefault(escalaGeneral.contribOSPct, 6);
+            const contribARTPct = pctOrDefault(escalaGeneral.contribARTPct, 4);
+            const baseContribOSART = totalRemunerativo + noRemunerativo;
+            const contribSS = totalRemunerativo * contribSSPct / 100;
+            const contribOS = baseContribOSART * contribOSPct / 100;
+            const contribART = baseContribOSART * contribARTPct / 100;
+            const contribSVCVO = parseFloat(escalaGeneral.svcvoMonto) || 0;
+            const costoTotalLaboral = totalRemunerativo + noRemunerativo + contribSS + contribOS + contribART + contribSVCVO;
+
             return {
                 jornada, fraccion, usarEscala, basico, basicoEscala, noRemEscala,
                 aniosAntig, antigPct, antigMonto, valorHora, he50, he100,
@@ -1050,7 +1080,9 @@
                 presentismoMonto, totalRemunerativo,
                 noRemunerativoBase, antigNoRemunMonto, presentismoNoRemunMonto, noRemunerativo,
                 jubilacion, ley19032, obraSocial, sindical, otrasDeducciones, totalDeducciones,
-                totalBruto, neto, contribPatronalesPct, contribucionesPatronales
+                totalBruto, neto, contribPatronalesPct, contribucionesPatronales,
+                contribSS, contribOS, contribART, contribSVCVO, costoTotalLaboral,
+                contribSSPct, contribOSPct, contribARTPct
             };
         }
 
@@ -1161,244 +1193,396 @@
             }
         }
 
-        /* ===================== Generación de PDF ===================== */
+        /* ===================== Gráfico de composición del costo laboral =====================
+         * El Anexo III del Decreto 407/2026 exige un resumen gráfico (gráfico
+         * de torta) de la composición del costo laboral total en el anverso
+         * del recibo. Pensado para impresión en blanco y negro: en vez de
+         * colores, cada porción se distingue por una textura (relleno sólido,
+         * líneas radiales o blanco/solo contorno). jsPDF no trae gráfico de
+         * torta nativo, así que cada porción se aproxima con un abanico de
+         * triángulos finos desde el centro. */
+        function dibujarSectorPie(doc, cx, cy, r, anguloInicioDeg, anguloFinDeg, patron) {
+            const barrido = anguloFinDeg - anguloInicioDeg;
+            if (barrido <= 0) return;
+            const pasos = Math.max(1, Math.ceil(barrido / 6));
+            const paso = barrido / pasos;
+            const punto = (deg) => [cx + r * Math.cos(deg * Math.PI / 180), cy + r * Math.sin(deg * Math.PI / 180)];
 
-        // Dibuja la página de un recibo (bloque ORIGINAL + DUPLICADO) en la
-        // página actual del documento `doc`. Se usa tanto para emitir el PDF de
-        // un solo empleado como para armar el PDF con todos los recibos juntos.
-        function dibujarPaginaRecibo(doc, empresa, emp, liq, calc) {
-            const W = 210;
-            // Se quitó el texto legal que iba suelto al pie de la hoja (fuera de
-            // los recibos) para poder estirar cada bloque y dar más aire a la firma.
-            const BLOCK_H = 136;
-            const TOP_MARGIN = 8;
-            const GAP = 10;
-            const y1 = TOP_MARGIN;
-            const y2 = y1 + BLOCK_H + GAP;
-
-            function bloque(y, tag) {
-                const left = 14, right = W - 14;
-                const bottom = y + BLOCK_H;
-                doc.setDrawColor(20, 20, 20);
-                doc.setLineWidth(0.4);
-                doc.rect(left, y, right - left, BLOCK_H);
-
-                // Header
-                doc.setFont("times", "bold"); doc.setFontSize(12);
-                doc.text(empresa.razonSocial || "[Razón Social]", left + 4, y + 8);
-                doc.setFont("helvetica", "normal"); doc.setFontSize(8);
-                doc.text(`CUIT: ${empresa.cuit || "-"}   Domicilio: ${empresa.domicilio || "-"}`, left + 4, y + 13);
-                doc.text(`Actividad: ${empresa.actividad || "Comercio"}`, left + 4, y + 17);
-
-                doc.setFont("helvetica", "bold"); doc.setFontSize(10);
-                doc.text("RECIBO DE HABERES", right - 4, y + 8, { align: "right" });
-                doc.setFont("helvetica", "normal"); doc.setFontSize(8);
-                doc.text("CCT 130/75 — Empleados de Comercio", right - 4, y + 12, { align: "right" });
-                doc.setDrawColor(13, 115, 119); doc.setLineWidth(0.6);
-                doc.rect(right - 24, y + 15, 20, 5.5);
-                doc.setFont("helvetica", "bold"); doc.setFontSize(7.5);
-                doc.text(tag, right - 14, y + 19, { align: "center" });
-
-                doc.setDrawColor(20, 20, 20); doc.setLineWidth(0.2);
-                doc.line(left, y + 21, right, y + 21);
-
-                // Datos empleado — 3 columnas (nombre/período/legajo,
-                // cuil/fecha pago/antigüedad, categoría/fecha ingreso) para
-                // liberar espacio vertical cuando hay muchos conceptos.
-                doc.setFont("helvetica", "normal"); doc.setFontSize(8.5);
-                let ly = y + 27;
-                const col1 = left + 4, col2 = left + 90, col3 = left + 148;
-                doc.text(`Apellido y Nombre: ${emp.nombre || "-"}`, col1, ly);
-                doc.text(`Período: ${liq.periodoLabel || "-"}`, col2, ly);
-                doc.text(`Legajo: ${emp.legajo || "-"}`, col3, ly);
-                ly += 5;
-                doc.text(`CUIL: ${emp.cuil || "-"}`, col1, ly);
-                doc.text(`Fecha de pago: ${liq.fechaPago || "-"}`, col2, ly);
-                doc.text(`Antig.: ${calc.aniosAntig} año(s)`, col3, ly);
-                ly += 5;
-                doc.text(`Categoría: ${emp.categoria || "-"} · ${JORNADA_LABEL_CORTO[calc.jornada] || "-"}`, col1, ly);
-                doc.text(`Fecha de ingreso: ${emp.fechaIngreso || "-"}`, col2, ly);
-
-                ly += 4;
-                doc.line(left, ly, right, ly);
-                ly += 5;
-
-                // Tabla única: Concepto | Remunerativo | No remunerativo | Deducción
-                const xRemun = left + 120;
-                const xNoRemun = left + 152;
-                const xDeduc = right - 4;
-
-                doc.setFont("helvetica", "bold"); doc.setFontSize(7);
-                doc.text("CONCEPTO", col1, ly);
-                doc.text("REMUNERATIVO", xRemun, ly, { align: "right" });
-                doc.text("NO REMUNER.", xNoRemun, ly, { align: "right" });
-                doc.text("DEDUCCIÓN", xDeduc, ly, { align: "right" });
-                ly += 2;
-                doc.setDrawColor(20, 20, 20); doc.setLineWidth(0.2);
-                doc.line(col1, ly, xDeduc, ly);
-                ly += 3.5;
-
-                // Armamos primero la lista de conceptos con importe (filtrando
-                // los que están en cero) para saber cuántas filas va a tener la
-                // tabla, y así elegir la altura de fila y el tamaño de letra:
-                // con muchos conceptos cargados (horas extra + plus vacacional +
-                // otros) el recibo se compacta solo para que todo siga entrando
-                // dentro del bloque, sin tapar los totales ni el neto.
-                const conceptosTabla = [
-                    ["Sueldo básico", calc.basico, 0, 0],
-                    ["Antigüedad", calc.antigMonto, 0, 0],
-                    ["Presentismo", calc.presentismoMonto, 0, 0],
-                    ["Horas extra", (calc.he50 || 0) + (calc.he100 || 0), 0, 0],
-                    [`Inasistencias (${calc.horasInasistencia || 0} hs)`, -(calc.inasistenciasMonto || 0), 0, 0],
-                    [`Plus vacacional (${calc.diasVacaciones || 0} día/s)`, calc.plusVacacional, 0, 0],
-                    [liq.otrosRemunerativosConcepto || "Otras remuneraciones", calc.otrosRemun, 0, 0],
-                    [liq.noRemunerativosConcepto || "Asignación no remunerativa", 0, calc.noRemunerativoBase, 0],
-                    ["Antigüedad s/no remunerativo", 0, calc.antigNoRemunMonto, 0],
-                    ["Presentismo s/no remunerativo", 0, calc.presentismoNoRemunMonto, 0],
-                    ["Jubilación (Ley 24.241) 11%", 0, 0, calc.jubilacion],
-                    ["Ley 19.032 (INSSJP/PAMI) 3%", 0, 0, calc.ley19032],
-                    ["Obra social 3%", 0, 0, calc.obraSocial],
-                    ["Cuota sindical FAECyS 4,5%", 0, 0, calc.sindical],
-                    [liq.otrasDeduccionesConcepto || "Otras deducciones", 0, 0, calc.otrasDeducciones],
-                ].filter(([, r, n, d]) => Math.abs(r || 0) >= 0.005 || Math.abs(n || 0) >= 0.005 || Math.abs(d || 0) >= 0.005);
-
-                const filasCount = conceptosTabla.length;
-                const conceptRowH = filasCount <= 9 ? 4.3 : filasCount <= 11 ? 3.9 : filasCount <= 13 ? 3.6 : 3.2;
-                const conceptFontSize = filasCount <= 9 ? 7.3 : filasCount <= 11 ? 7 : filasCount <= 13 ? 6.6 : 6.2;
-
-                doc.setFont("helvetica", "normal"); doc.setFontSize(conceptFontSize);
-                const filaTabla = (concepto, remun, norem, deduc) => {
-                    const r = remun || 0, n = norem || 0, d = deduc || 0;
-                    doc.text(concepto, col1, ly);
-                    if (Math.abs(r) >= 0.005) doc.text("$ " + fmt(r), xRemun, ly, { align: "right" });
-                    if (Math.abs(n) >= 0.005) doc.text("$ " + fmt(n), xNoRemun, ly, { align: "right" });
-                    if (Math.abs(d) >= 0.005) doc.text("$ " + fmt(d), xDeduc, ly, { align: "right" });
-                    ly += conceptRowH;
-                };
-
-                conceptosTabla.forEach(([concepto, remun, norem, deduc]) => filaTabla(concepto, remun, norem, deduc));
-
-                doc.setDrawColor(20, 20, 20); doc.setLineWidth(0.2);
-                doc.line(col1, ly - 1.5, xDeduc, ly - 1.5);
-                // -------------------- TOTALES --------------------
-                ly += 2;
-
-                doc.setFont("helvetica", "bold");
-                doc.setFontSize(7.5);
-
-                doc.text("TOTALES", col1, ly);
-                doc.text("$ " + fmt(calc.totalRemunerativo), xRemun, ly, { align: "right" });
-                doc.text("$ " + fmt(calc.noRemunerativo), xNoRemun, ly, { align: "right" });
-                doc.text("$ " + fmt(calc.totalDeducciones), xDeduc, ly, { align: "right" });
-
-
-                // -------------------- NETO (posición flexible) --------------------
-                // Cuando hay pocos conceptos, el bloque de neto se ubica pegado a
-                // los totales, aprovechando el espacio libre hacia abajo. Cuando
-                // hay muchos conceptos (horas extra, plus vacacional, etc.) y la
-                // tabla se extiende, el bloque se corre hacia arriba lo justo
-                // para que siga entrando todo (son, contribuciones, texto legal
-                // y firma) sin desbordar el recuadro del recibo.
-                const netoMinY = ly + 3;
-                const netoMaxY = bottom - (calc.contribucionesPatronales > 0 ? 30 : 26);
-                const netoY = Math.min(netoMinY, netoMaxY);
-
-                doc.setDrawColor(20, 20, 20);
-                doc.rect(left, netoY, right - left, 8);
-
-                doc.setFont("helvetica", "bold");
-                doc.setFontSize(9.5);
-
-                doc.text("NETO A COBRAR", left + 4, netoY + 5.5);
-                doc.text("$ " + fmt(calc.neto), right - 4, netoY + 5.5, { align: "right" });
-
-
-                // -------------------- SON --------------------
-                doc.setFont("helvetica", "italic");
-                doc.setFontSize(7);
-
-                doc.text("Son: " + pesosEnLetras(calc.neto), left + 4, netoY + 11.5);
-
-
-                // -------------------- CONTRIBUCIONES --------------------
-                let legalOffsetY = 15.5;
-                if (calc.contribucionesPatronales > 0) {
-
-                    doc.setFont("helvetica", "italic");
-                    doc.setFontSize(6.3);
-                    doc.setTextColor(120, 120, 120);
-
-                    doc.text(
-                        `Contribuciones patronales a cargo del empleador (informativo): $ ${fmt(calc.contribucionesPatronales)}`,
-                        left + 4,
-                        netoY + 15
-                    );
-
-                    doc.setTextColor(20, 20, 20);
-                    legalOffsetY = 18.5;
-                }
-
-
-                // -------------------- TEXTO LEGAL --------------------
-                doc.setFont("helvetica", "normal");
-                doc.setFontSize(6.3);
-                doc.setTextColor(120, 120, 120);
-
-                const legalTexto =
-                    "Art. 138, 139 y 140 - Ley de Contrato de Trabajo Nº 20.744. Este comprobante detalla la totalidad de las remuneraciones y descuentos correspondientes al período indicado.";
-
-                const legalLineas = doc.splitTextToSize(
-                    legalTexto,
-                    ((right - left) / 2) - 4
-                );
-
-                doc.text(legalLineas, left + 4, netoY + legalOffsetY);
-
-                doc.setTextColor(20, 20, 20);
-
-                // firmas — siempre ancladas al pie del bloque
-                doc.setDrawColor(20, 20, 20); doc.setLineWidth(0.2);
-                doc.setFont("helvetica", "normal");
-                doc.setFontSize(6.5);
-
-                if (tag === "ORIGINAL") {
-                    // Solo firma del empleador
-                    doc.line(right - 70, y + BLOCK_H - 4, right - 4, y + BLOCK_H - 4);
-                    doc.text("Firma y aclaración del empleador", right - 37, y + BLOCK_H - 1.5, { align: "center" });
-                } else {
-                    // Solo firma del empleado
-                    doc.line(right - 70, y + BLOCK_H - 4, right - 4, y + BLOCK_H - 4);
-                    doc.text("Recibí conforme — Firma del empleado", right - 37, y + BLOCK_H - 1.5, { align: "center" });
-                }
+            // Fondo blanco del sector (asegura opacidad antes de aplicar la textura)
+            doc.setFillColor(255, 255, 255);
+            for (let i = 0; i < pasos; i++) {
+                const [x0, y0] = punto(anguloInicioDeg + i * paso);
+                const [x1, y1] = punto(anguloInicioDeg + (i + 1) * paso);
+                doc.triangle(cx, cy, x0, y0, x1, y1, "F");
             }
 
-            bloque(y1, "ORIGINAL");
-            doc.setLineDashPattern([1.2, 1.2], 0);
-            doc.setDrawColor(140, 132, 113);
-            doc.line(14, y1 + BLOCK_H + GAP / 2, W - 14, y1 + BLOCK_H + GAP / 2);
-            doc.setLineDashPattern([], 0);
-            bloque(y2, "DUPLICADO");
+            if (patron === "solido") {
+                doc.setFillColor(0, 0, 0);
+                for (let i = 0; i < pasos; i++) {
+                    const [x0, y0] = punto(anguloInicioDeg + i * paso);
+                    const [x1, y1] = punto(anguloInicioDeg + (i + 1) * paso);
+                    doc.triangle(cx, cy, x0, y0, x1, y1, "F");
+                }
+            } else if (patron === "rayado") {
+                // Líneas radiales finas dentro del sector = aspecto "interlineado"
+                doc.setDrawColor(0, 0, 0); doc.setLineWidth(0.15);
+                const lineasCant = Math.max(2, Math.round(barrido / 12));
+                for (let i = 0; i <= lineasCant; i++) {
+                    const [x, y] = punto(anguloInicioDeg + (barrido * i) / lineasCant);
+                    doc.line(cx, cy, x, y);
+                }
+            }
+            // patron "blanco": queda solo el fondo blanco ya dibujado, sin textura.
+
+            // Bordes del sector (los dos radios + el arco), para separar las
+            // porciones entre sí aunque no tengan color.
+            doc.setDrawColor(0, 0, 0); doc.setLineWidth(0.25);
+            const [xi, yi] = punto(anguloInicioDeg), [xf, yf] = punto(anguloFinDeg);
+            doc.line(cx, cy, xi, yi);
+            doc.line(cx, cy, xf, yf);
+            for (let i = 0; i < pasos; i++) {
+                const [x0, y0] = punto(anguloInicioDeg + i * paso);
+                const [x1, y1] = punto(anguloInicioDeg + (i + 1) * paso);
+                doc.line(x0, y0, x1, y1);
+            }
         }
 
-        // PDF de un solo empleado (botón "Confirmar y emitir PDF" en Liquidación)
+        // Grafica la composición del costo laboral total en 3 porciones:
+        // lo que efectivamente cobra el trabajador (neto, relleno sólido
+        // negro), lo que se le retiene (aportes, líneas radiales) y lo que
+        // paga el empleador por encima del bruto (contribuciones
+        // patronales, en blanco/solo contorno) — pensado para que se
+        // distinga bien impreso en blanco y negro.
+        function dibujarGraficoCostoLaboral(doc, cx, cy, r, neto, aportesTrabajador, contribPatronales) {
+            const total = (neto || 0) + (aportesTrabajador || 0) + (contribPatronales || 0);
+            if (total <= 0) {
+                doc.setDrawColor(0, 0, 0); doc.setFillColor(255, 255, 255);
+                doc.circle(cx, cy, r, "FD");
+                return;
+            }
+            let anguloActual = -90; // arranca arriba (12 hs)
+            const segmentos = [
+                { valor: neto, patron: "solido" },
+                { valor: aportesTrabajador, patron: "rayado" },
+                { valor: contribPatronales, patron: "blanco" },
+            ];
+            segmentos.forEach(seg => {
+                if (!seg.valor || seg.valor <= 0) return;
+                const barrido = (seg.valor / total) * 360;
+                dibujarSectorPie(doc, cx, cy, r, anguloActual, anguloActual + barrido, seg.patron);
+                anguloActual += barrido;
+            });
+        }
+
+        /* ===================== Generación de PDF ===================== */
+
+        // Dibuja UNA copia completa del recibo (ORIGINAL o DUPLICADO) ocupando
+        // toda la hoja A4, estructurada en las 4 secciones que exige el
+        // art. 140 LCT reglamentado por el Decreto 407/2026 (Anexo III):
+        //   I.   Datos del empleador y del trabajador
+        //   II.  Contribuciones y costo laboral a cargo del empleador
+        //        (con el resumen gráfico / gráfico de torta exigido),
+        //        expuesto ANTES de determinar el bruto y el neto
+        //   III. Remuneración bruta y deducciones
+        //   IV.  Remuneración neta
+        // Antes esta función dibujaba ORIGINAL + DUPLICADO apaisados en una
+        // misma hoja; con el detalle adicional que exige el Anexo III (tabla
+        // de contribuciones + gráfico) ya no entran los dos juntos con
+        // legibilidad, así que ahora cada copia ocupa una página propia
+        // (ver generarPDF / generarPDFTodos, que llaman a esta función dos
+        // veces por empleado, agregando una página nueva para el duplicado).
+        // Dibuja una copia del recibo a partir de startY y devuelve el Y donde
+        // terminó (incluida la firma + un margen chico), en vez de forzar una
+        // altura fija de página completa. Así el bloque se ajusta al
+        // contenido real: si es corto, ocupa menos, y el llamador puede
+        // decidir si entran ORIGINAL + DUPLICADO en la misma hoja o si hace
+        // falta una hoja nueva para el duplicado (ver generarPDF).
+        function dibujarPaginaReciboCompleta(doc, empresa, emp, liq, calc, tag, startY) {
+            const left = 14, right = 196;
+            const top = startY;
+            let ly = top + 6.5;
+
+            // ---- Encabezado ----
+            doc.setFont("times", "bold"); doc.setFontSize(12);
+            doc.text(empresa.razonSocial || "[Razón Social]", left + 4, ly);
+            doc.setFont("helvetica", "normal"); doc.setFontSize(7.6);
+            doc.text(`CUIT: ${empresa.cuit || "-"}   Domicilio: ${empresa.domicilio || "-"}`, left + 4, ly + 4.4);
+            doc.text(`Actividad: ${empresa.actividad || "Comercio"}`, left + 4, ly + 8);
+
+            doc.setFont("helvetica", "bold"); doc.setFontSize(10.5);
+            doc.text("RECIBO DE HABERES", right - 4, ly, { align: "right" });
+            doc.setFont("helvetica", "normal"); doc.setFontSize(7);
+            doc.text("CCT 130/75 — Art. 140 LCT (Dec. 407/2026, Anexo III)", right - 4, ly + 4, { align: "right" });
+            doc.setDrawColor(13, 115, 119); doc.setLineWidth(0.6);
+            doc.rect(right - 25, ly + 6, 21, 5.5);
+            doc.setFont("helvetica", "bold"); doc.setFontSize(7.5);
+            doc.text(tag, right - 14.5, ly + 9.7, { align: "center" });
+
+            ly += 12.5;
+            doc.setDrawColor(20, 20, 20); doc.setLineWidth(0.25);
+            doc.line(left, ly, right, ly);
+            ly += 2.5;
+
+            // ---- Sección I: datos del empleador y del trabajador ----
+            doc.setFont("helvetica", "bold"); doc.setFontSize(7);
+            doc.text("SECCIÓN I — DATOS DEL EMPLEADOR Y DEL TRABAJADOR", left + 4, ly);
+            ly += 3.2;
+            doc.setFont("helvetica", "normal"); doc.setFontSize(8);
+            const col1 = left + 4, col2 = left + 92, col3 = left + 148;
+            doc.text(`Apellido y Nombre: ${emp.nombre || "-"}`, col1, ly);
+            doc.text(`Período: ${liq.periodoLabel || "-"}`, col2, ly);
+            doc.text(`Legajo: ${emp.legajo || "-"}`, col3, ly);
+            ly += 4.2;
+            doc.text(`CUIL: ${emp.cuil || "-"}`, col1, ly);
+            doc.text(`Fecha de pago: ${liq.fechaPago || "-"}`, col2, ly);
+            doc.text(`Antigüedad: ${calc.aniosAntig} año(s)`, col3, ly);
+            ly += 4.2;
+            doc.text(`Categoría: ${emp.categoria || "-"} · ${JORNADA_LABEL_CORTO[calc.jornada] || "-"}`, col1, ly);
+            doc.text(`Fecha de ingreso: ${emp.fechaIngreso || "-"}`, col2, ly);
+
+            ly += 2.5;
+            doc.setDrawColor(20, 20, 20); doc.setLineWidth(0.25);
+            doc.line(left, ly, right, ly);
+            ly += 2.5;
+
+            // ---- Sección II: contribuciones y costo laboral (antes del bruto/neto) ----
+            // El gráfico de torta se ubica a la DERECHA de la tabla de
+            // contribuciones (no debajo), aprovechando el ancho libre de la
+            // página en vez de sumar altura extra al bloque.
+            doc.setFont("helvetica", "bold"); doc.setFontSize(7);
+            doc.text("SECCIÓN II — CONTRIBUCIONES Y COSTO LABORAL A CARGO DEL EMPLEADOR (informativo)", left + 4, ly, { maxWidth: 178 });
+            ly += 2.5;
+
+            const colConcepto = left + 4, colBase = left + 70, colImporte = left + 108;
+            doc.setFont("helvetica", "bold"); doc.setFontSize(6.2);
+            doc.text("CONCEPTO", colConcepto, ly);
+            doc.text("BASE", colBase, ly, { align: "right" });
+            doc.text("IMPORTE", colImporte, ly, { align: "right" });
+            ly += 1.2;
+            doc.setDrawColor(20, 20, 20); doc.setLineWidth(0.2);
+            doc.line(colConcepto, ly, colImporte, ly);
+            ly += 2.5;
+
+            const filaContribTop = ly - 1.5;
+            doc.setFont("helvetica", "normal"); doc.setFontSize(6.7);
+            const filaContrib = (concepto, base, pctTexto, importe) => {
+                const etiqueta = pctTexto === "-" ? concepto : `${concepto} (${pctTexto})`;
+                doc.text(etiqueta, colConcepto, ly);
+                if (base !== null && base !== undefined) doc.text("$ " + fmt(base), colBase, ly, { align: "right" });
+                doc.text("$ " + fmt(importe), colImporte, ly, { align: "right" });
+                ly += 3.1;
+            };
+            filaContrib("Seguridad Social (SIPA)", calc.totalRemunerativo, calc.contribSSPct.toFixed(2) + "%", calc.contribSS);
+            filaContrib("Obra Social / PAMI (Ley 19.032)", calc.totalRemunerativo + calc.noRemunerativo, calc.contribOSPct.toFixed(2) + "%", calc.contribOS);
+            filaContrib("A.R.T.", calc.totalRemunerativo + calc.noRemunerativo, calc.contribARTPct.toFixed(2) + "%", calc.contribART);
+            filaContrib("SVCVO", undefined, "-", calc.contribSVCVO);
+
+            doc.setDrawColor(20, 20, 20); doc.setLineWidth(0.2);
+            doc.line(colConcepto, ly - 1.2, colImporte, ly - 1.2);
+            ly += 1.4;
+            doc.setFont("helvetica", "bold"); doc.setFontSize(7.2);
+            doc.text("COSTO LABORAL TOTAL", colConcepto, ly);
+            doc.text("$ " + fmt(calc.costoTotalLaboral), colImporte, ly, { align: "right" });
+
+            // Resumen gráfico (gráfico de torta), exigido por el Anexo III,
+            // dibujado al costado de la tabla — mismo espacio vertical, sin
+            // agregar filas nuevas debajo.
+            const aportesTrabajador = calc.totalDeducciones;
+            const contribPatronales = calc.costoTotalLaboral - calc.totalBruto;
+            const pieR = 6, pieCx = right - 46, pieCy = filaContribTop + pieR - 1;
+            dibujarGraficoCostoLaboral(doc, pieCx, pieCy, pieR, calc.neto, aportesTrabajador, contribPatronales);
+
+            const leyendaX = pieCx + pieR + 3;
+            let leyendaY = pieCy - pieR + 3;
+            const leyendaItems = [
+                { label: "Neto trabajador", valor: calc.neto, patron: "solido" },
+                { label: "Aportes trabajador", valor: aportesTrabajador, patron: "rayado" },
+                { label: "Contrib. patronales", valor: contribPatronales, patron: "blanco" },
+            ];
+            doc.setFontSize(5.4);
+            const swatch = 2;
+            leyendaItems.forEach(item => {
+                // Swatch cuadrado con la misma textura B/N que el gráfico
+                doc.setDrawColor(0, 0, 0); doc.setLineWidth(0.15);
+                doc.setFillColor(255, 255, 255);
+                doc.rect(leyendaX, leyendaY - swatch, swatch, swatch, "FD");
+                if (item.patron === "solido") {
+                    doc.setFillColor(0, 0, 0);
+                    doc.rect(leyendaX, leyendaY - swatch, swatch, swatch, "F");
+                } else if (item.patron === "rayado") {
+                    for (let i = 0.4; i < swatch; i += 0.7) {
+                        doc.line(leyendaX, leyendaY - swatch + i, leyendaX + i, leyendaY - swatch);
+                        doc.line(leyendaX + i, leyendaY, leyendaX + swatch, leyendaY - swatch + i);
+                    }
+                    doc.setDrawColor(0, 0, 0); doc.setLineWidth(0.15);
+                    doc.rect(leyendaX, leyendaY - swatch, swatch, swatch);
+                }
+                doc.setFont("helvetica", "normal"); doc.setTextColor(20, 20, 20);
+                doc.text(`${item.label}: $ ${fmt(item.valor)}`, leyendaX + swatch + 0.8, leyendaY);
+                leyendaY += 2.9;
+            });
+
+            ly += 2;
+            doc.setDrawColor(20, 20, 20); doc.setLineWidth(0.25);
+            doc.line(left, ly, right, ly);
+            ly += 2.5;
+
+            // ---- Sección III: remuneración bruta y deducciones ----
+            doc.setFont("helvetica", "bold"); doc.setFontSize(7);
+            doc.text("SECCIÓN III — REMUNERACIÓN BRUTA Y DEDUCCIONES", left + 4, ly);
+            ly += 2.8;
+
+            const xRemun = left + 120, xNoRemun = left + 152, xDeduc = right - 4;
+            doc.setFontSize(6.6);
+            doc.text("CONCEPTO", left + 4, ly);
+            doc.text("REMUNERATIVO", xRemun, ly, { align: "right" });
+            doc.text("NO REMUNER.", xNoRemun, ly, { align: "right" });
+            doc.text("DEDUCCIÓN", xDeduc, ly, { align: "right" });
+            ly += 1.2;
+            doc.setDrawColor(20, 20, 20); doc.setLineWidth(0.2);
+            doc.line(left + 4, ly, xDeduc, ly);
+            ly += 2.3;
+
+            // Igual criterio que antes: se arma la lista filtrando conceptos en
+            // cero, y la altura de fila se ajusta según la cantidad, así el
+            // bloque no crece más de lo necesario cuando hay pocos conceptos.
+            const conceptosTabla = [
+                ["Sueldo básico", calc.basico, 0, 0],
+                ["Antigüedad", calc.antigMonto, 0, 0],
+                ["Presentismo", calc.presentismoMonto, 0, 0],
+                ["Horas extra", (calc.he50 || 0) + (calc.he100 || 0), 0, 0],
+                [`Inasistencias (${calc.horasInasistencia || 0} hs)`, -(calc.inasistenciasMonto || 0), 0, 0],
+                [`Plus vacacional (${calc.diasVacaciones || 0} día/s)`, calc.plusVacacional, 0, 0],
+                [liq.otrosRemunerativosConcepto || "Otras remuneraciones", calc.otrosRemun, 0, 0],
+                [liq.noRemunerativosConcepto || "Asignación no remunerativa", 0, calc.noRemunerativoBase, 0],
+                ["Antigüedad s/no remunerativo", 0, calc.antigNoRemunMonto, 0],
+                ["Presentismo s/no remunerativo", 0, calc.presentismoNoRemunMonto, 0],
+                ["Jubilación (Ley 24.241) 11%", 0, 0, calc.jubilacion],
+                ["Ley 19.032 (INSSJP/PAMI) 3%", 0, 0, calc.ley19032],
+                ["Obra social 3%", 0, 0, calc.obraSocial],
+                ["Cuota sindical FAECyS 4,5%", 0, 0, calc.sindical],
+                [liq.otrasDeduccionesConcepto || "Otras deducciones", 0, 0, calc.otrasDeducciones],
+            ].filter(([, r, n, d]) => Math.abs(r || 0) >= 0.005 || Math.abs(n || 0) >= 0.005 || Math.abs(d || 0) >= 0.005);
+
+            const filasCount = conceptosTabla.length;
+            const conceptRowH = filasCount <= 10 ? 3.5 : filasCount <= 13 ? 3.1 : 2.7;
+            const conceptFontSize = filasCount <= 10 ? 6.8 : filasCount <= 13 ? 6.4 : 5.9;
+
+            doc.setFont("helvetica", "normal"); doc.setFontSize(conceptFontSize);
+            conceptosTabla.forEach(([concepto, remun, norem, deduc]) => {
+                const r = remun || 0, n = norem || 0, d = deduc || 0;
+                doc.text(concepto, left + 4, ly);
+                if (Math.abs(r) >= 0.005) doc.text("$ " + fmt(r), xRemun, ly, { align: "right" });
+                if (Math.abs(n) >= 0.005) doc.text("$ " + fmt(n), xNoRemun, ly, { align: "right" });
+                if (Math.abs(d) >= 0.005) doc.text("$ " + fmt(d), xDeduc, ly, { align: "right" });
+                ly += conceptRowH;
+            });
+
+            doc.setDrawColor(20, 20, 20); doc.setLineWidth(0.2);
+            doc.line(left + 4, ly - 1.2, xDeduc, ly - 1.2);
+            ly += 1.3;
+            doc.setFont("helvetica", "bold"); doc.setFontSize(7.2);
+            doc.text("TOTALES", left + 4, ly);
+            doc.text("$ " + fmt(calc.totalRemunerativo), xRemun, ly, { align: "right" });
+            doc.text("$ " + fmt(calc.noRemunerativo), xNoRemun, ly, { align: "right" });
+            doc.text("$ " + fmt(calc.totalDeducciones), xDeduc, ly, { align: "right" });
+            ly += 3.5;
+
+            // ---- Sección IV: remuneración neta ----
+            doc.setDrawColor(20, 20, 20); doc.setLineWidth(0.25);
+            doc.line(left, ly - 2.5, right, ly - 2.5);
+            doc.setFont("helvetica", "bold"); doc.setFontSize(7);
+            doc.text("SECCIÓN IV — REMUNERACIÓN NETA", left + 4, ly);
+            ly += 3.5;
+
+            // Sin recuadro (se ganó espacio quitándolo): el neto queda como
+            // línea destacada en negrita, igual de legible pero más compacta.
+            doc.setFont("helvetica", "bold"); doc.setFontSize(10);
+            doc.text("NETO A COBRAR", left + 4, ly);
+            doc.text("$ " + fmt(calc.neto), right - 4, ly, { align: "right" });
+            ly += 2;
+            doc.setDrawColor(20, 20, 20); doc.setLineWidth(0.25);
+            doc.line(left, ly, right, ly);
+            ly += 2.5;
+
+            doc.setFont("helvetica", "italic"); doc.setFontSize(7);
+            doc.text("Son: " + pesosEnLetras(calc.neto), left + 4, ly);
+            ly += 3;
+
+            // El texto legal solo ocupa hasta la mitad del ancho de la
+            // página (deja la otra mitad libre, del lado de la firma).
+            doc.setFont("helvetica", "normal"); doc.setFontSize(5.8);
+            doc.setTextColor(120, 120, 120);
+            const legalTexto = "Arts. 138, 139 y 140 - Ley de Contrato de Trabajo N\u00b0 20.744 (t.o. Ley 27.802) y Decreto 407/2026, Anexo III. Este comprobante detalla la totalidad de las remuneraciones, contribuciones patronales y descuentos correspondientes al período indicado.";
+            const legalLineas = doc.splitTextToSize(legalTexto, (right - left) / 2 - 4);
+            doc.text(legalLineas, left + 4, ly);
+            doc.setTextColor(20, 20, 20);
+            ly += legalLineas.length * 2.3 + 1.5;
+
+            // ---- Firma, pegada al final del contenido (no al pie fijo de la hoja) ----
+            doc.setDrawColor(20, 20, 20); doc.setLineWidth(0.2);
+            doc.setFont("helvetica", "normal"); doc.setFontSize(6.8);
+            const firmaY = ly + 2;
+            doc.line(right - 70, firmaY, right - 4, firmaY);
+            doc.text(
+                tag === "ORIGINAL" ? "Firma y aclaración del empleador" : "Recibí conforme — Firma del empleado",
+                right - 37, firmaY + 3, { align: "center" }
+            );
+
+            const bottom = firmaY + 4;
+            doc.setDrawColor(20, 20, 20); doc.setLineWidth(0.4);
+            doc.rect(left, top, right - left, bottom - top);
+
+            return bottom;
+        }
+
+        // Dibuja ORIGINAL y DUPLICADO de un empleado a partir de startY,
+        // aprovechando que ambos bloques dan siempre la misma altura (mismos
+        // datos, solo cambia el texto de la firma): si las dos copias entran
+        // en lo que queda de la hoja actual van juntas (una debajo de la
+        // otra); si no entran, el duplicado pasa a una hoja nueva. Devuelve
+        // el Y donde terminó lo dibujado, para poder encadenar más recibos en
+        // la misma hoja (ver generarPDFTodos).
+        const PAGE_H = 297, PAGE_MARGIN = 8, GAP_COPIAS = 5;
+        function dibujarEmpleadoCompleto(doc, empresa, emp, liq, calc, startY) {
+            let y = startY;
+            const finOriginal = dibujarPaginaReciboCompleta(doc, empresa, emp, liq, calc, "ORIGINAL", y);
+            const altoBloque = finOriginal - y;
+            let yDuplicado = finOriginal + GAP_COPIAS;
+            if (yDuplicado + altoBloque > PAGE_H - PAGE_MARGIN) {
+                doc.addPage();
+                yDuplicado = PAGE_MARGIN;
+            }
+            return dibujarPaginaReciboCompleta(doc, empresa, emp, liq, calc, "DUPLICADO", yDuplicado);
+        }
+
+        // PDF de un solo empleado (botón "Confirmar y emitir PDF" en Liquidación).
         function generarPDF(empresa, emp, liq, calc) {
             const { jsPDF } = window.jspdf;
             const doc = new jsPDF({ unit: "mm", format: "a4" });
-            dibujarPaginaRecibo(doc, empresa, emp, liq, calc);
+            dibujarEmpleadoCompleto(doc, empresa, emp, liq, calc, PAGE_MARGIN);
             const nombreArchivo = `Recibo_${(emp.nombre || "empleado").replace(/\s+/g, "_")}_${liq.periodo || "periodo"}.pdf`;
             doc.save(nombreArchivo);
         }
 
-        // PDF con todos los recibos cargados, uno por página, en un solo archivo
+        // PDF con todos los recibos cargados, en un solo archivo (una hoja
+        // por empleado). Dentro de esa hoja, ORIGINAL y DUPLICADO ahora
+        // ocupan solo el alto real que necesitan (en vez de una hoja fija
+        // por copia), así que casi siempre entran los dos apilados en la
+        // misma hoja.
         function generarPDFTodos(empresa, empleadosConLiq, escalaGeneral) {
             const { jsPDF } = window.jspdf;
             const doc = new jsPDF({ unit: "mm", format: "a4" });
             let periodoRef = "";
+            let y = PAGE_MARGIN;
             empleadosConLiq.forEach((item, idx) => {
                 const { emp, liq } = item;
                 const calc = calcularLiquidacion(emp, liq, escalaGeneral);
-                if (idx > 0) doc.addPage();
-                dibujarPaginaRecibo(doc, empresa, emp, liq, calc);
+                if (idx > 0) {
+                    doc.addPage();
+                    y = PAGE_MARGIN;
+                }
+                y = dibujarEmpleadoCompleto(doc, empresa, emp, liq, calc, y);
                 if (!periodoRef) periodoRef = liq.periodo;
             });
             const nombreArchivo = `Recibos_${(empresa.razonSocial || "empresa").replace(/\s+/g, "_")}_${periodoRef || "periodo"}.pdf`;
@@ -2038,21 +2222,47 @@
                         </div>
                     </div>
                     <div className="card">
-                        <h3>Contribuciones patronales (informativo)</h3>
-                        <div className="field" style={{ maxWidth: 220 }}>
-                            <label>% contribuciones a cargo del empleador</label>
-                            <input type="text" placeholder="Ej. 26,40"
-                                value={escalaGeneral.contribucionesPatronalesPct}
-                                onChange={e => updateEscalaGeneral({ contribucionesPatronalesPct: e.target.value })} />
+                        <h3>Contribuciones patronales del recibo de sueldo (Sección II, Dec. 407/2026)</h3>
+                        <div className="grid">
+                            <div className="field">
+                                <label>Seguridad Social — SIPA (%)</label>
+                                <input type="text" placeholder="Ej. 18"
+                                    value={escalaGeneral.contribSSPct}
+                                    onChange={e => updateEscalaGeneral({ contribSSPct: e.target.value })} />
+                                <div className="hint">Sobre el total remunerativo.</div>
+                            </div>
+                            <div className="field">
+                                <label>Obra Social / PAMI (%)</label>
+                                <input type="text" placeholder="Ej. 6"
+                                    value={escalaGeneral.contribOSPct}
+                                    onChange={e => updateEscalaGeneral({ contribOSPct: e.target.value })} />
+                                <div className="hint">Sobre remunerativo + no remunerativo.</div>
+                            </div>
+                            <div className="field">
+                                <label>A.R.T. (%)</label>
+                                <input type="text" placeholder="Ej. 4"
+                                    value={escalaGeneral.contribARTPct}
+                                    onChange={e => updateEscalaGeneral({ contribARTPct: e.target.value })} />
+                                <div className="hint">Sobre la misma base que Obra Social.</div>
+                            </div>
+                            <div className="field">
+                                <label>SVCVO — importe fijo ($)</label>
+                                <input type="text" placeholder="Ej. 3500"
+                                    value={escalaGeneral.svcvoMonto}
+                                    onChange={e => updateEscalaGeneral({ svcvoMonto: e.target.value })} />
+                                <div className="hint">Seguro de Vida Colectivo Obligatorio, monto fijo por empleado.</div>
+                            </div>
                         </div>
                         <div className="hint">
-                            Este porcentaje es solo para mostrar, a título informativo, el costo laboral total
-                            en el recibo — <strong>no se descuenta del sueldo ni afecta el neto a cobrar del
-                                empleado</strong>. Corresponde a los aportes que hace la empresa (jubilación
-                            patronal, obra social, ART, asignaciones familiares, fondo de desempleo, etc.), que
-                            varían según el régimen de contribuciones vigente (Decreto 814/2001) y la actividad.
-                            Confirmá la alícuota exacta que te corresponde con tu contador antes de usarla; si
-                            lo dejás vacío, el recibo no muestra esta línea.
+                            El Decreto 407/2026 (Anexo III, reglamentario del art. 140 LCT) exige que el
+                            recibo de sueldo muestre, <strong>antes</strong> de determinar el bruto y el neto,
+                            el detalle de las contribuciones patronales por concepto (identificadas y
+                            cuantificadas, no solo un total) y un resumen gráfico del costo laboral. Estos 4
+                            campos son las alícuotas/importes que usa esa sección del PDF; no son valores
+                            fijos del sistema — cargá acá los porcentajes reales que te informa tu
+                            declaración jurada de ARCA (o los que te confirme tu contador), ya que varían
+                            según la actividad y el régimen de cada empresa. Si dejás un campo vacío, el PDF
+                            usa 18% / 6% / 4% como valor de referencia.
                         </div>
                     </div>
                     <div className="hint" style={{ padding: "0 4px" }}>
@@ -2365,11 +2575,14 @@
                                 <tr className="total"><td>NETO A COBRAR</td><td className="amount">$ {fmt(calc.neto)}</td></tr>
                             </tbody>
                         </table>
-                        {calc.contribucionesPatronales > 0 && (
+                        {calc.costoTotalLaboral > 0 && (
                             <div className="hint" style={{ marginTop: 10 }}>
-                                <strong>Contribuciones patronales ({calc.contribPatronalesPct}%, informativo):</strong>{" "}
-                                $ {fmt(calc.contribucionesPatronales)} — a cargo del empleador, no descuenta del
-                                neto de arriba.
+                                <strong>Contribuciones patronales (Sección II, informativo — no descuentan del neto de arriba):</strong>
+                                <br />Seguridad Social ({calc.contribSSPct.toFixed(2)}%): $ {fmt(calc.contribSS)} ·
+                                Obra Social/PAMI ({calc.contribOSPct.toFixed(2)}%): $ {fmt(calc.contribOS)} ·
+                                A.R.T. ({calc.contribARTPct.toFixed(2)}%): $ {fmt(calc.contribART)} ·
+                                SVCVO: $ {fmt(calc.contribSVCVO)}
+                                <br /><strong>Costo total laboral: $ {fmt(calc.costoTotalLaboral)}</strong>
                             </div>
                         )}
                         <div className="actions-row">
@@ -2452,7 +2665,51 @@
                             <div><span>Jornada</span>{JORNADA_LABEL[calc.jornada] || "-"}</div>
                         </div>
 
-                        <div className="section-h">Detalle de haberes y deducciones</div>
+                        <div className="section-h">Sección II — Contribuciones y costo laboral a cargo del empleador (informativo)</div>
+                        {calc.costoTotalLaboral > 0 && (() => {
+                            const aportesTrabajador = calc.totalDeducciones;
+                            const contribPatronales = calc.costoTotalLaboral - calc.totalBruto;
+                            const total = calc.neto + aportesTrabajador + contribPatronales;
+                            const pctNeto = total > 0 ? (calc.neto / total) * 100 : 0;
+                            const pctAportes = total > 0 ? (aportesTrabajador / total) * 100 : 0;
+                            const gradient = `conic-gradient(#0D7377 0% ${pctNeto}%, #B7791F ${pctNeto}% ${pctNeto + pctAportes}%, #16213E ${pctNeto + pctAportes}% 100%)`;
+                            return (
+                                <div style={{ display: "flex", gap: 16, alignItems: "flex-start", padding: "6px 4px 10px", flexWrap: "wrap" }}>
+                                    <table className="detalle-table" style={{ flex: "1 1 320px" }}>
+                                        <thead>
+                                            <tr>
+                                                <th>Concepto</th>
+                                                <th style={{ textAlign: "right" }}>Base</th>
+                                                <th style={{ textAlign: "right" }}>%</th>
+                                                <th style={{ textAlign: "right" }}>Importe</th>
+                                            </tr>
+                                        </thead>
+                                        <tbody>
+                                            <tr><td>Seguridad Social (SIPA)</td><td className="num">$ {fmt(calc.totalRemunerativo)}</td><td className="num">{calc.contribSSPct.toFixed(2)}%</td><td className="num">$ {fmt(calc.contribSS)}</td></tr>
+                                            <tr><td>Obra Social / PAMI</td><td className="num">$ {fmt(calc.totalRemunerativo + calc.noRemunerativo)}</td><td className="num">{calc.contribOSPct.toFixed(2)}%</td><td className="num">$ {fmt(calc.contribOS)}</td></tr>
+                                            <tr><td>A.R.T.</td><td className="num">$ {fmt(calc.totalRemunerativo + calc.noRemunerativo)}</td><td className="num">{calc.contribARTPct.toFixed(2)}%</td><td className="num">$ {fmt(calc.contribART)}</td></tr>
+                                            <tr><td>SVCVO</td><td className="num"></td><td className="num">-</td><td className="num">$ {fmt(calc.contribSVCVO)}</td></tr>
+                                        </tbody>
+                                        <tfoot>
+                                            <tr className="totales-row">
+                                                <td colSpan="3">Costo laboral total</td>
+                                                <td className="num">$ {fmt(calc.costoTotalLaboral)}</td>
+                                            </tr>
+                                        </tfoot>
+                                    </table>
+                                    <div style={{ flex: "0 0 150px", display: "flex", flexDirection: "column", alignItems: "center", gap: 8 }}>
+                                        <div style={{ width: 90, height: 90, borderRadius: "50%", background: gradient, border: "1px solid #999" }}></div>
+                                        <div style={{ fontSize: 10, lineHeight: 1.6 }}>
+                                            <div><span style={{ display: "inline-block", width: 8, height: 8, background: "#0D7377", marginRight: 4 }}></span>Neto: $ {fmt(calc.neto)}</div>
+                                            <div><span style={{ display: "inline-block", width: 8, height: 8, background: "#B7791F", marginRight: 4 }}></span>Aportes: $ {fmt(aportesTrabajador)}</div>
+                                            <div><span style={{ display: "inline-block", width: 8, height: 8, background: "#16213E", marginRight: 4 }}></span>Contrib. patr.: $ {fmt(contribPatronales)}</div>
+                                        </div>
+                                    </div>
+                                </div>
+                            );
+                        })()}
+
+                        <div className="section-h">Sección III — Remuneración bruta y deducciones</div>
                         <table className="detalle-table">
                             <thead>
                                 <tr>
@@ -2490,19 +2747,16 @@
                             </tfoot>
                         </table>
 
+                        <div className="section-h">Sección IV — Remuneración neta</div>
                         <div className="neto-row">
                             <div className="lbl">NETO A COBRAR</div>
                             <div className="val">$ {fmt(calc.neto)}</div>
                         </div>
                         <div className="en-letras">Son: {pesosEnLetras(calc.neto)}</div>
-                        {calc.contribucionesPatronales > 0 && (
-                            <div className="en-letras" style={{ fontStyle: "normal", color: "#777" }}>
-                                Contribuciones patronales ({calc.contribPatronalesPct}%, informativo — no incluidas en el neto): $ {fmt(calc.contribucionesPatronales)}
-                            </div>
-                        )}
                         <div className="legal">
-                            Art. 138, 139 y 140 — Ley de Contrato de Trabajo N° 20.744. Este comprobante detalla la totalidad de las remuneraciones
-                            y descuentos correspondientes al período indicado.
+                            Arts. 138, 139 y 140 — Ley de Contrato de Trabajo N° 20.744 (t.o. Ley 27.802) y Decreto 407/2026, Anexo III.
+                            Este comprobante detalla la totalidad de las remuneraciones, contribuciones patronales y descuentos
+                            correspondientes al período indicado.
                         </div>
 
                         <div className="firmas">
