@@ -1067,7 +1067,11 @@
             const contribARTPct = pctOrDefault(escalaGeneral.contribARTPct, 4);
             const baseContribOSART = totalRemunerativo + noRemunerativo;
             const contribSS = totalRemunerativo * contribSSPct / 100;
-            const contribOS = baseContribOSART * contribOSPct / 100;
+            // Cont. Obra Social del empleador: igual que el aporte del
+            // trabajador, se calcula sobre la base "regrosada" a jornada
+            // completa (baseCalculoOS), no sobre la remuneración real del
+            // empleado a jornada reducida.
+            const contribOS = baseCalculoOS * contribOSPct / 100;
             const contribART = baseContribOSART * contribARTPct / 100;
             const contribSVCVO = parseFloat(escalaGeneral.svcvoMonto) || 0;
             const costoTotalLaboral = totalRemunerativo + noRemunerativo + contribSS + contribOS + contribART + contribSVCVO;
@@ -1082,7 +1086,7 @@
                 jubilacion, ley19032, obraSocial, sindical, otrasDeducciones, totalDeducciones,
                 totalBruto, neto, contribPatronalesPct, contribucionesPatronales,
                 contribSS, contribOS, contribART, contribSVCVO, costoTotalLaboral,
-                contribSSPct, contribOSPct, contribARTPct
+                contribSSPct, contribOSPct, contribARTPct, baseCalculoOS
             };
         }
 
@@ -1373,9 +1377,9 @@
                 ly += 3.1;
             };
             filaContrib("Seguridad Social (SIPA)", calc.totalRemunerativo, calc.contribSSPct.toFixed(2) + "%", calc.contribSS);
-            filaContrib("Obra Social / PAMI (Ley 19.032)", calc.totalRemunerativo + calc.noRemunerativo, calc.contribOSPct.toFixed(2) + "%", calc.contribOS);
-            filaContrib("A.R.T.", calc.totalRemunerativo + calc.noRemunerativo, calc.contribARTPct.toFixed(2) + "%", calc.contribART);
-            filaContrib("SVCVO", undefined, "-", calc.contribSVCVO);
+            filaContrib("Obra Social / PAMI (Ley 19.032)", calc.baseCalculoOS, calc.contribOSPct.toFixed(2) + "%", calc.contribOS);
+            filaContrib("A.R.T.", calc.totalRemunerativo + calc.noRemunerativo, "-", calc.contribART);
+            filaContrib("SVCO", undefined, "-", calc.contribSVCVO);
 
             doc.setDrawColor(20, 20, 20); doc.setLineWidth(0.2);
             doc.line(colConcepto, ly - 1.2, colImporte, ly - 1.2);
@@ -1459,8 +1463,8 @@
                 ["Presentismo s/no remunerativo", 0, calc.presentismoNoRemunMonto, 0],
                 ["Jubilación (Ley 24.241) 11%", 0, 0, calc.jubilacion],
                 ["Ley 19.032 (INSSJP/PAMI) 3%", 0, 0, calc.ley19032],
-                ["Obra social 3%", 0, 0, calc.obraSocial],
-                ["Cuota sindical FAECyS 4,5%", 0, 0, calc.sindical],
+                ["Obra Social Aporte Unificado", 0, 0, calc.obraSocial],
+                ["Cuota sindical 4,5%", 0, 0, calc.sindical],
                 [liq.otrasDeduccionesConcepto || "Otras deducciones", 0, 0, calc.otrasDeducciones],
             ].filter(([, r, n, d]) => Math.abs(r || 0) >= 0.005 || Math.abs(n || 0) >= 0.005 || Math.abs(d || 0) >= 0.005);
 
@@ -1675,8 +1679,8 @@
                 filaTabla("S.A.C. s/no remunerativo", 0, aguinaldo.sacNoRemun, 0);
                 filaTabla("Jubilación (Ley 24.241) 11%", 0, 0, aguinaldo.jubilacion);
                 filaTabla("Ley 19.032 (INSSJP/PAMI) 3%", 0, 0, aguinaldo.ley19032);
-                filaTabla("Obra social 3%", 0, 0, aguinaldo.obraSocial);
-                filaTabla("Cuota sindical FAECyS 4,5%", 0, 0, aguinaldo.sindical);
+                filaTabla("Obra Social Aporte Unificado", 0, 0, aguinaldo.obraSocial);
+                filaTabla("Cuota sindical 4,5%", 0, 0, aguinaldo.sindical);
 
                 doc.setDrawColor(20, 20, 20); doc.setLineWidth(0.2);
                 doc.line(col1, ly - 1.5, xDeduc, ly - 1.5);
@@ -2567,7 +2571,7 @@
                                 <tr><td className="calc-section-title" colSpan="2">Deducciones</td></tr>
                                 <tr><td className="label">Jubilación 11%</td><td className="amount">$ {fmt(calc.jubilacion)}</td></tr>
                                 <tr><td className="label">Ley 19.032 3%</td><td className="amount">$ {fmt(calc.ley19032)}</td></tr>
-                                <tr><td className="label">Obra social 3%</td><td className="amount">$ {fmt(calc.obraSocial)}</td></tr>
+                                <tr><td className="label">Obra Social Aporte Unificado</td><td className="amount">$ {fmt(calc.obraSocial)}</td></tr>
                                 <tr><td className="label">Cuota sindical 4,5%</td><td className="amount">$ {fmt(calc.sindical)}</td></tr>
                                 <tr><td className="label">Otras deducciones</td><td className="amount">$ {fmt(calc.otrasDeducciones)}</td></tr>
                                 <tr className="total"><td>Total deducciones</td><td className="amount">$ {fmt(calc.totalDeducciones)}</td></tr>
@@ -2608,7 +2612,7 @@
                                 <tr><td className="label">S.A.C. bruto</td><td className="amount">$ {fmt(aguinaldo.sacBruto)}</td></tr>
                                 <tr><td className="label">Jubilación 11%</td><td className="amount">$ {fmt(aguinaldo.jubilacion)}</td></tr>
                                 <tr><td className="label">Ley 19.032 3%</td><td className="amount">$ {fmt(aguinaldo.ley19032)}</td></tr>
-                                <tr><td className="label">Obra social 3%</td><td className="amount">$ {fmt(aguinaldo.obraSocial)}</td></tr>
+                                <tr><td className="label">Obra Social Aporte Unificado</td><td className="amount">$ {fmt(aguinaldo.obraSocial)}</td></tr>
                                 <tr><td className="label">Cuota sindical 4,5%</td><td className="amount">$ {fmt(aguinaldo.sindical)}</td></tr>
                                 <tr className="total"><td>NETO AGUINALDO</td><td className="amount">$ {fmt(aguinaldo.neto)}</td></tr>
                             </tbody>
@@ -2686,7 +2690,7 @@
                                         </thead>
                                         <tbody>
                                             <tr><td>Seguridad Social (SIPA)</td><td className="num">$ {fmt(calc.totalRemunerativo)}</td><td className="num">{calc.contribSSPct.toFixed(2)}%</td><td className="num">$ {fmt(calc.contribSS)}</td></tr>
-                                            <tr><td>Obra Social / PAMI</td><td className="num">$ {fmt(calc.totalRemunerativo + calc.noRemunerativo)}</td><td className="num">{calc.contribOSPct.toFixed(2)}%</td><td className="num">$ {fmt(calc.contribOS)}</td></tr>
+                                            <tr><td>Obra Social / PAMI</td><td className="num">$ {fmt(calc.baseCalculoOS)}</td><td className="num">{calc.contribOSPct.toFixed(2)}%</td><td className="num">$ {fmt(calc.contribOS)}</td></tr>
                                             <tr><td>A.R.T.</td><td className="num">$ {fmt(calc.totalRemunerativo + calc.noRemunerativo)}</td><td className="num">{calc.contribARTPct.toFixed(2)}%</td><td className="num">$ {fmt(calc.contribART)}</td></tr>
                                             <tr><td>SVCVO</td><td className="num"></td><td className="num">-</td><td className="num">$ {fmt(calc.contribSVCVO)}</td></tr>
                                         </tbody>
@@ -2733,7 +2737,7 @@
                                 {calc.presentismoNoRemunMonto > 0 && <tr><td>Presentismo s/no remunerativo</td><td className="num"></td><td className="num">$ {fmt(calc.presentismoNoRemunMonto)}</td><td className="num"></td></tr>}
                                 <tr><td>Jubilación 11%</td><td className="num"></td><td className="num"></td><td className="num">$ {fmt(calc.jubilacion)}</td></tr>
                                 <tr><td>Ley 19.032 3%</td><td className="num"></td><td className="num"></td><td className="num">$ {fmt(calc.ley19032)}</td></tr>
-                                <tr><td>Obra social 3%</td><td className="num"></td><td className="num"></td><td className="num">$ {fmt(calc.obraSocial)}</td></tr>
+                                <tr><td>Obra Social Aporte Unificado</td><td className="num"></td><td className="num"></td><td className="num">$ {fmt(calc.obraSocial)}</td></tr>
                                 {calc.sindical > 0 && <tr><td>Cuota sindical 4,5%</td><td className="num"></td><td className="num"></td><td className="num">$ {fmt(calc.sindical)}</td></tr>}
                                 {calc.otrasDeducciones > 0 && <tr><td>{liq.otrasDeduccionesConcepto || "Otras deducciones"}</td><td className="num"></td><td className="num"></td><td className="num">$ {fmt(calc.otrasDeducciones)}</td></tr>}
                             </tbody>
