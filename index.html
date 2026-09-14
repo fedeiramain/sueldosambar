@@ -1376,8 +1376,8 @@
                 doc.text("$ " + fmt(importe), colImporte, ly, { align: "right" });
                 ly += 3.1;
             };
-            filaContrib("Seguridad Social (SIPA)", calc.totalRemunerativo, calc.contribSSPct.toFixed(2) + "%", calc.contribSS);
-            filaContrib("Obra Social / PAMI (Ley 19.032)", calc.baseCalculoOS, calc.contribOSPct.toFixed(2) + "%", calc.contribOS);
+            filaContrib("Seguridad Social (SIPA/INSSJP)", calc.totalRemunerativo, calc.contribSSPct.toFixed(2) + "%", calc.contribSS);
+            filaContrib("Obra Social (Ley 19.032)", calc.baseCalculoOS, calc.contribOSPct.toFixed(2) + "%", calc.contribOS);
             filaContrib("A.R.T.", calc.totalRemunerativo + calc.noRemunerativo, "-", calc.contribART);
             filaContrib("SVCO", undefined, "-", calc.contribSVCVO);
 
