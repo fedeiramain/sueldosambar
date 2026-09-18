@@ -1436,9 +1436,10 @@
             doc.text("SECCIÓN III — REMUNERACIÓN BRUTA Y DEDUCCIONES", left + 4, ly);
             ly += 2.8;
 
-            const xRemun = left + 120, xNoRemun = left + 152, xDeduc = right - 4;
+            const colUnidades = left + 96, xRemun = left + 125, xNoRemun = left + 156, xDeduc = right - 4;
             doc.setFontSize(6.6);
             doc.text("CONCEPTO", left + 4, ly);
+            doc.text("UNIDADES", colUnidades, ly, { align: "right" });
             doc.text("REMUNERATIVO", xRemun, ly, { align: "right" });
             doc.text("NO REMUNER.", xNoRemun, ly, { align: "right" });
             doc.text("DEDUCCIÓN", xDeduc, ly, { align: "right" });
@@ -1450,22 +1451,30 @@
             // Igual criterio que antes: se arma la lista filtrando conceptos en
             // cero, y la altura de fila se ajusta según la cantidad, así el
             // bloque no crece más de lo necesario cuando hay pocos conceptos.
+            // Se agrega un 5° elemento por fila ("unidades"): para los
+            // conceptos que se calculan a partir de una cantidad (horas
+            // extra, inasistencias, plus vacacional) muestra esa cantidad;
+            // para las deducciones (y los conceptos que se calculan como un
+            // % de otro monto, como antigüedad o presentismo) muestra el
+            // porcentaje aplicado, en vez de tenerlo escrito dentro del
+            // nombre del concepto.
             const conceptosTabla = [
-                ["Sueldo básico", calc.basico, 0, 0],
-                ["Antigüedad", calc.antigMonto, 0, 0],
-                ["Presentismo", calc.presentismoMonto, 0, 0],
-                ["Horas extra", (calc.he50 || 0) + (calc.he100 || 0), 0, 0],
-                [`Inasistencias (${calc.horasInasistencia || 0} hs)`, -(calc.inasistenciasMonto || 0), 0, 0],
-                [`Plus vacacional (${calc.diasVacaciones || 0} día/s)`, calc.plusVacacional, 0, 0],
-                [liq.otrosRemunerativosConcepto || "Otras remuneraciones", calc.otrosRemun, 0, 0],
-                [liq.noRemunerativosConcepto || "Asignación no remunerativa", 0, calc.noRemunerativoBase, 0],
-                ["Antigüedad s/no remunerativo", 0, calc.antigNoRemunMonto, 0],
-                ["Presentismo s/no remunerativo", 0, calc.presentismoNoRemunMonto, 0],
-                ["Jubilación (Ley 24.241) 11%", 0, 0, calc.jubilacion],
-                ["Ley 19.032 (INSSJP/PAMI) 3%", 0, 0, calc.ley19032],
-                ["Obra Social Aporte Unificado", 0, 0, calc.obraSocial],
-                ["Cuota sindical 4,5%", 0, 0, calc.sindical],
-                [liq.otrasDeduccionesConcepto || "Otras deducciones", 0, 0, calc.otrasDeducciones],
+                ["Sueldo básico", calc.basico, 0, 0, ""],
+                ["Antigüedad", calc.antigMonto, 0, 0, ""],
+                ["Presentismo", calc.presentismoMonto, 0, 0, calc.presentismoMonto > 0 ? "8,33%" : ""],
+                ["Horas extra al 50%", calc.he50 || 0, 0, 0, (parseFloat(liq.horasExtra50) || 0) > 0 ? `${liq.horasExtra50} hs` : ""],
+                ["Horas extra al 100%", calc.he100 || 0, 0, 0, (parseFloat(liq.horasExtra100) || 0) > 0 ? `${liq.horasExtra100} hs` : ""],
+                ["Inasistencias", -(calc.inasistenciasMonto || 0), 0, 0, calc.horasInasistencia > 0 ? `${calc.horasInasistencia} hs` : ""],
+                ["Plus vacacional", calc.plusVacacional, 0, 0, calc.diasVacaciones > 0 ? `${calc.diasVacaciones} día/s` : ""],
+                [liq.otrosRemunerativosConcepto || "Otras remuneraciones", calc.otrosRemun, 0, 0, ""],
+                [liq.noRemunerativosConcepto || "Asignación no remunerativa", 0, calc.noRemunerativoBase, 0, ""],
+                ["Antigüedad s/no remunerativo", 0, calc.antigNoRemunMonto, 0, ""],
+                ["Presentismo s/no remunerativo", 0, calc.presentismoNoRemunMonto, 0, calc.presentismoNoRemunMonto > 0 ? "8,33%" : ""],
+                ["Jubilación (Ley 24.241)", 0, 0, calc.jubilacion, "11%"],
+                ["Ley 19.032 (INSSJP/PAMI)", 0, 0, calc.ley19032, "3%"],
+                ["Obra Social Aporte Unificado", 0, 0, calc.obraSocial, "3%"],
+                ["Cuota sindical", 0, 0, calc.sindical, calc.sindical > 0 ? "4,5%" : ""],
+                [liq.otrasDeduccionesConcepto || "Otras deducciones", 0, 0, calc.otrasDeducciones, ""],
             ].filter(([, r, n, d]) => Math.abs(r || 0) >= 0.005 || Math.abs(n || 0) >= 0.005 || Math.abs(d || 0) >= 0.005);
 
             const filasCount = conceptosTabla.length;
@@ -1473,9 +1482,10 @@
             const conceptFontSize = filasCount <= 10 ? 6.8 : filasCount <= 13 ? 6.4 : 5.9;
 
             doc.setFont("helvetica", "normal"); doc.setFontSize(conceptFontSize);
-            conceptosTabla.forEach(([concepto, remun, norem, deduc]) => {
+            conceptosTabla.forEach(([concepto, remun, norem, deduc, unidades]) => {
                 const r = remun || 0, n = norem || 0, d = deduc || 0;
-                doc.text(concepto, left + 4, ly);
+                doc.text(concepto, left + 4, ly, { maxWidth: colUnidades - (left + 4) - 3 });
+                if (unidades) doc.text(unidades, colUnidades, ly, { align: "right" });
                 if (Math.abs(r) >= 0.005) doc.text("$ " + fmt(r), xRemun, ly, { align: "right" });
                 if (Math.abs(n) >= 0.005) doc.text("$ " + fmt(n), xNoRemun, ly, { align: "right" });
                 if (Math.abs(d) >= 0.005) doc.text("$ " + fmt(d), xDeduc, ly, { align: "right" });
