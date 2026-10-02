@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="es">
 
@@ -857,6 +856,10 @@
                 contribSSPct: "18",
                 contribOSPct: "6",
                 contribARTPct: "4",
+                // Día del Empleado de Comercio: monto fijo de jornada completa
+                // (se ajusta por jornada). Vacío = (básico + antig. + present.) ÷ 25.
+                diaComercioMonto: "",
+                diaComercioConcepto: "Día del Empleado de Comercio",
             };
         }
 
@@ -998,7 +1001,23 @@
             const brutoParaPresentismo = basico + antigMonto + he50 + he100 + plusVacacional + otrosRemun - inasistenciasMonto;
             const presentismoMonto = liq.presentismo ? brutoParaPresentismo * 0.0833 : 0;
 
-            const totalRemunerativo = brutoParaPresentismo + presentismoMonto;
+            // Día del Empleado de Comercio: si el empleado tiene el tilde en su
+            // liquidación, se paga un día calculado como (básico + antigüedad +
+            // presentismo) ÷ 25. El presentismo que entra en este valor día es
+            // el 8,33% sobre básico + antigüedad (solo si el empleado tiene
+            // presentismo tildado). Como el valor día ya incluye el
+            // presentismo, este concepto NO vuelve a generar presentismo.
+            // Si en la escala general se carga un monto fijo, se usa ese monto
+            // (ajustado por jornada) en lugar del cálculo. Es remunerativo.
+            const presentismoSobreBasicoAntig = liq.presentismo ? (basico + antigMonto) * 0.0833 : 0;
+            const valorDiaComercio = (basico + antigMonto + presentismoSobreBasicoAntig) / 25;
+            const diaComercioFijo = parseFloat(escalaGeneral.diaComercioMonto);
+            const diaComercioMonto = liq.diaEmpleadoComercio
+                ? ((!isNaN(diaComercioFijo) && diaComercioFijo > 0) ? diaComercioFijo * fraccion : valorDiaComercio)
+                : 0;
+            const diaComercioConcepto = escalaGeneral.diaComercioConcepto || "Día del Empleado de Comercio";
+
+            const totalRemunerativo = brutoParaPresentismo + presentismoMonto + diaComercioMonto;
 
             // El concepto no remunerativo también genera antigüedad y presentismo
             // (mismos porcentajes que sobre el básico), pero lo generado sigue
@@ -1080,7 +1099,7 @@
                 jornada, fraccion, usarEscala, basico, basicoEscala, noRemEscala,
                 aniosAntig, antigPct, antigMonto, valorHora, he50, he100,
                 horasBaseInasistencia, valorHoraInasistencia, horasInasistencia, inasistenciasMonto,
-                valorDiaVacaciones, diasVacaciones, plusVacacional, otrosRemun,
+                valorDiaVacaciones, diasVacaciones, plusVacacional, diaComercioMonto, diaComercioConcepto, otrosRemun,
                 presentismoMonto, totalRemunerativo,
                 noRemunerativoBase, antigNoRemunMonto, presentismoNoRemunMonto, noRemunerativo,
                 jubilacion, ley19032, obraSocial, sindical, otrasDeducciones, totalDeducciones,
@@ -1162,6 +1181,7 @@
                 inasistencias_monto: n(calc.inasistenciasMonto),
                 plus_vacacional_dias: n(calc.diasVacaciones),
                 plus_vacacional_monto: n(calc.plusVacacional),
+                dia_empleado_comercio_monto: n(calc.diaComercioMonto),
                 otras_remuneraciones_concepto: liq.otrosRemunerativosConcepto || "",
                 otras_remuneraciones_monto: n(calc.otrosRemun),
                 no_remunerativo_concepto: liq.noRemunerativosConcepto || "",
@@ -1280,27 +1300,19 @@
 
         /* ===================== Generación de PDF ===================== */
 
-        // Dibuja UNA copia completa del recibo (ORIGINAL o DUPLICADO) ocupando
-        // toda la hoja A4, estructurada en las 4 secciones que exige el
-        // art. 140 LCT reglamentado por el Decreto 407/2026 (Anexo III):
+        // Dibuja una copia del recibo (ORIGINAL o DUPLICADO) a partir de
+        // startY, estructurada en las 4 secciones que exige el art. 140 LCT
+        // reglamentado por el Decreto 407/2026 (Anexo III):
         //   I.   Datos del empleador y del trabajador
         //   II.  Contribuciones y costo laboral a cargo del empleador
         //        (con el resumen gráfico / gráfico de torta exigido),
         //        expuesto ANTES de determinar el bruto y el neto
         //   III. Remuneración bruta y deducciones
         //   IV.  Remuneración neta
-        // Antes esta función dibujaba ORIGINAL + DUPLICADO apaisados en una
-        // misma hoja; con el detalle adicional que exige el Anexo III (tabla
-        // de contribuciones + gráfico) ya no entran los dos juntos con
-        // legibilidad, así que ahora cada copia ocupa una página propia
-        // (ver generarPDF / generarPDFTodos, que llaman a esta función dos
-        // veces por empleado, agregando una página nueva para el duplicado).
-        // Dibuja una copia del recibo a partir de startY y devuelve el Y donde
-        // terminó (incluida la firma + un margen chico), en vez de forzar una
-        // altura fija de página completa. Así el bloque se ajusta al
-        // contenido real: si es corto, ocupa menos, y el llamador puede
-        // decidir si entran ORIGINAL + DUPLICADO en la misma hoja o si hace
-        // falta una hoja nueva para el duplicado (ver generarPDF).
+        // Devuelve el Y donde terminó (incluida la firma + un margen chico),
+        // en vez de forzar una altura fija de página completa. Así el bloque
+        // se ajusta al contenido real y el llamador puede decidir si entran
+        // ORIGINAL + DUPLICADO en la misma hoja (ver dibujarEmpleadoCompleto).
         function dibujarPaginaReciboCompleta(doc, empresa, emp, liq, calc, tag, startY) {
             const left = 14, right = 196;
             const top = startY;
@@ -1448,16 +1460,11 @@
             doc.line(left + 4, ly, xDeduc, ly);
             ly += 2.3;
 
-            // Igual criterio que antes: se arma la lista filtrando conceptos en
-            // cero, y la altura de fila se ajusta según la cantidad, así el
-            // bloque no crece más de lo necesario cuando hay pocos conceptos.
-            // Se agrega un 5° elemento por fila ("unidades"): para los
-            // conceptos que se calculan a partir de una cantidad (horas
-            // extra, inasistencias, plus vacacional) muestra esa cantidad;
-            // para las deducciones (y los conceptos que se calculan como un
-            // % de otro monto, como antigüedad o presentismo) muestra el
-            // porcentaje aplicado, en vez de tenerlo escrito dentro del
-            // nombre del concepto.
+            // Se arma la lista filtrando conceptos en cero, y la altura de fila
+            // se ajusta según la cantidad, así el bloque no crece más de lo
+            // necesario cuando hay pocos conceptos. El 5° elemento de cada fila
+            // ("unidades") muestra la cantidad (horas, días) o el porcentaje
+            // aplicado, según el concepto.
             const conceptosTabla = [
                 ["Sueldo básico", calc.basico, 0, 0, ""],
                 ["Antigüedad", calc.antigMonto, 0, 0, ""],
@@ -1466,6 +1473,7 @@
                 ["Horas extra al 100%", calc.he100 || 0, 0, 0, (parseFloat(liq.horasExtra100) || 0) > 0 ? `${liq.horasExtra100} hs` : ""],
                 ["Inasistencias", -(calc.inasistenciasMonto || 0), 0, 0, calc.horasInasistencia > 0 ? `${calc.horasInasistencia} hs` : ""],
                 ["Plus vacacional", calc.plusVacacional, 0, 0, calc.diasVacaciones > 0 ? `${calc.diasVacaciones} día/s` : ""],
+                [calc.diaComercioConcepto, calc.diaComercioMonto, 0, 0, calc.diaComercioMonto > 0 ? "1 día" : ""],
                 [liq.otrosRemunerativosConcepto || "Otras remuneraciones", calc.otrosRemun, 0, 0, ""],
                 [liq.noRemunerativosConcepto || "Asignación no remunerativa", 0, calc.noRemunerativoBase, 0, ""],
                 ["Antigüedad s/no remunerativo", 0, calc.antigNoRemunMonto, 0, ""],
@@ -1555,8 +1563,7 @@
         // datos, solo cambia el texto de la firma): si las dos copias entran
         // en lo que queda de la hoja actual van juntas (una debajo de la
         // otra); si no entran, el duplicado pasa a una hoja nueva. Devuelve
-        // el Y donde terminó lo dibujado, para poder encadenar más recibos en
-        // la misma hoja (ver generarPDFTodos).
+        // el Y donde terminó lo dibujado.
         const PAGE_H = 297, PAGE_MARGIN = 8, GAP_COPIAS = 5;
         function dibujarEmpleadoCompleto(doc, empresa, emp, liq, calc, startY) {
             let y = startY;
@@ -1580,10 +1587,7 @@
         }
 
         // PDF con todos los recibos cargados, en un solo archivo (una hoja
-        // por empleado). Dentro de esa hoja, ORIGINAL y DUPLICADO ahora
-        // ocupan solo el alto real que necesitan (en vez de una hoja fija
-        // por copia), así que casi siempre entran los dos apilados en la
-        // misma hoja.
+        // por empleado, con ORIGINAL y DUPLICADO apilados cuando entran).
         function generarPDFTodos(empresa, empleadosConLiq, escalaGeneral) {
             const { jsPDF } = window.jspdf;
             const doc = new jsPDF({ unit: "mm", format: "a4" });
@@ -1782,103 +1786,216 @@
             doc.save(nombreArchivo);
         }
 
-        // PDF resumen simple: una tabla con columna "Empleado" y columna
-        // "Neto a cobrar", uno por fila, con salto de página automático y una
-        // fila de total al final. Útil para tener a mano cuánto hay que
-        // transferirle a cada persona sin abrir cada recibo.
+        // PDF planilla de liquidación: una fila por empleado y una columna por
+        // cada concepto (remunerativos, no remunerativos, deducciones y neto),
+        // en A4 apaisado, con fila de totales al final y salto de página
+        // automático. Las columnas de conceptos que están en cero para TODOS
+        // los empleados se omiten para ganar espacio; las columnas de totales
+        // y el neto se muestran siempre. El tamaño de letra se ajusta solo
+        // para que los importes entren en el ancho de cada columna.
         function generarPDFPlanillaNetos(empresa, empleadosConLiq, escalaGeneral) {
             const { jsPDF } = window.jspdf;
-            const doc = new jsPDF({ unit: "mm", format: "a4" });
+            const doc = new jsPDF({ unit: "mm", format: "a4", orientation: "landscape" });
 
-            const left = 20, right = 190;
-            const rowH = 8;
-            const topMargin = 20;
-            const bottomMargin = 20;
+            const PAGE_W_L = 297, PAGE_H_L = 210;
+            const left = 10, right = PAGE_W_L - 10;
+            const topMargin = 14, bottomMargin = 12;
+            const nombreW = 44;
+            const rowH = 6;
             let periodoRef = "";
 
             const filas = empleadosConLiq.map(({ emp, liq }) => {
                 const calc = calcularLiquidacion(emp, liq, escalaGeneral);
                 if (!periodoRef) periodoRef = liq.periodoLabel || liq.periodo || "";
-                return { nombre: emp.nombre || "(sin nombre)", neto: calc.neto };
+                return { nombre: emp.nombre || "(sin nombre)", calc };
             });
-            const totalNeto = filas.reduce((acc, f) => acc + (f.neto || 0), 0);
+
+            const TODAS_COLUMNAS = [
+                { grupo: "REMUNERATIVO", label: "Básico", get: c => c.basico },
+                { grupo: "REMUNERATIVO", label: "Antigüedad", get: c => c.antigMonto },
+                { grupo: "REMUNERATIVO", label: "Presentismo", get: c => c.presentismoMonto },
+                { grupo: "REMUNERATIVO", label: "Horas extra 50%", get: c => c.he50 },
+                { grupo: "REMUNERATIVO", label: "Horas extra 100%", get: c => c.he100 },
+                { grupo: "REMUNERATIVO", label: "Inasistencias", get: c => -(c.inasistenciasMonto || 0) },
+                { grupo: "REMUNERATIVO", label: "Plus vacacional", get: c => c.plusVacacional },
+                { grupo: "REMUNERATIVO", label: "Día Empl. Comercio", get: c => c.diaComercioMonto },
+                { grupo: "REMUNERATIVO", label: "Otras remun.", get: c => c.otrosRemun },
+                { grupo: "REMUNERATIVO", label: "Total remun.", get: c => c.totalRemunerativo, total: true },
+                { grupo: "NO REMUNERATIVO", label: "Asig. no remun.", get: c => c.noRemunerativoBase },
+                { grupo: "NO REMUNERATIVO", label: "Antig. s/no rem.", get: c => c.antigNoRemunMonto },
+                { grupo: "NO REMUNERATIVO", label: "Present. s/no rem.", get: c => c.presentismoNoRemunMonto },
+                { grupo: "NO REMUNERATIVO", label: "Total no remun.", get: c => c.noRemunerativo, total: true },
+                { grupo: "DEDUCCIONES", label: "Jubilación 11%", get: c => c.jubilacion },
+                { grupo: "DEDUCCIONES", label: "Ley 19.032 3%", get: c => c.ley19032 },
+                { grupo: "DEDUCCIONES", label: "Obra social 3%", get: c => c.obraSocial },
+                { grupo: "DEDUCCIONES", label: "Sindical 4,5%", get: c => c.sindical },
+                { grupo: "DEDUCCIONES", label: "Otras deducc.", get: c => c.otrasDeducciones },
+                { grupo: "DEDUCCIONES", label: "Total deducc.", get: c => c.totalDeducciones, total: true },
+                { grupo: "NETO", label: "Neto a cobrar", get: c => c.neto, total: true },
+            ];
+
+            const columnas = TODAS_COLUMNAS.filter(col =>
+                col.total || filas.some(f => Math.abs(col.get(f.calc) || 0) >= 0.005)
+            );
+            const totales = columnas.map(col => filas.reduce((acc, f) => acc + (col.get(f.calc) || 0), 0));
+
+            const colW = (right - left - nombreW) / columnas.length;
+            const colX1 = (i) => left + nombreW + (i + 1) * colW; // borde derecho de la columna i
+
+            // Tamaño de letra: el mayor que permita que todos los importes
+            // (incluidos los totales en negrita) entren en el ancho de columna.
+            let fontSize = Math.min(8, Math.max(4.5, colW / 2.1));
+            doc.setFont("helvetica", "bold");
+            const textosMasLargos = [...totales, ...filas.flatMap(f => columnas.map(col => col.get(f.calc) || 0))]
+                .map(v => fmt(v));
+            while (fontSize > 4.5) {
+                doc.setFontSize(fontSize);
+                const maxW = Math.max(...textosMasLargos.map(t => doc.getTextWidth(t)));
+                if (maxW <= colW - 1.4) break;
+                fontSize -= 0.25;
+            }
+
+            const recortar = (texto, ancho) => {
+                let t = texto;
+                if (doc.getTextWidth(t) <= ancho) return t;
+                while (t.length > 1 && doc.getTextWidth(t + "…") > ancho) t = t.slice(0, -1);
+                return t + "…";
+            };
+
+            const GRUPO_FILL = {
+                "REMUNERATIVO": [232, 238, 238],
+                "NO REMUNERATIVO": [240, 235, 222],
+                "DEDUCCIONES": [238, 232, 232],
+                "NETO": [215, 222, 235],
+            };
+
+            // Índices donde empieza un grupo nuevo (para las líneas verticales)
+            const cortesGrupo = columnas
+                .map((col, i) => (i > 0 && columnas[i - 1].grupo !== col.grupo) ? i : null)
+                .filter(i => i !== null);
 
             let ly = topMargin;
+            let pagina = 1;
 
             function dibujarEncabezado() {
-                doc.setFont("times", "bold"); doc.setFontSize(14);
-                doc.text(empresa.razonSocial || "[Razón Social]", left, ly);
-                ly += 6;
-                doc.setFont("helvetica", "normal"); doc.setFontSize(9);
-                doc.setTextColor(90, 90, 90);
-                doc.text(`CUIT: ${empresa.cuit || "-"}`, left, ly);
-                ly += 5;
-                doc.setFont("helvetica", "bold"); doc.setFontSize(11);
                 doc.setTextColor(20, 20, 20);
-                doc.text(`Planilla de netos a cobrar${periodoRef ? " — " + periodoRef : ""}`, left, ly);
-                ly += 8;
+                doc.setFont("times", "bold"); doc.setFontSize(13);
+                doc.text(empresa.razonSocial || "[Razón Social]", left, ly);
+                doc.setFont("helvetica", "normal"); doc.setFontSize(8.5);
+                doc.setTextColor(90, 90, 90);
+                doc.text(`CUIT: ${empresa.cuit || "-"}`, right, ly, { align: "right" });
+                ly += 5.5;
+                doc.setFont("helvetica", "bold"); doc.setFontSize(10.5);
+                doc.setTextColor(20, 20, 20);
+                doc.text(`Planilla de liquidación y netos a cobrar${periodoRef ? " — " + periodoRef : ""}`, left, ly);
+                doc.setFont("helvetica", "normal"); doc.setFontSize(7.5);
+                doc.setTextColor(90, 90, 90);
+                doc.text(`Hoja ${pagina}`, right, ly, { align: "right" });
+                doc.setTextColor(20, 20, 20);
+                ly += 4;
 
-                doc.setDrawColor(20, 20, 20); doc.setLineWidth(0.3);
-                doc.setFont("helvetica", "bold"); doc.setFontSize(9);
-                doc.text("EMPLEADO", left, ly);
-                doc.text("NETO A COBRAR", right, ly, { align: "right" });
-                ly += 2;
+                // Fila de grupos (Remunerativo / No remunerativo / Deducciones / Neto)
+                const grupoH = 4.5;
+                let i = 0;
+                while (i < columnas.length) {
+                    const g = columnas[i].grupo;
+                    let j = i;
+                    while (j + 1 < columnas.length && columnas[j + 1].grupo === g) j++;
+                    const x0 = left + nombreW + i * colW, x1 = colX1(j);
+                    const fill = GRUPO_FILL[g] || [235, 235, 235];
+                    doc.setFillColor(fill[0], fill[1], fill[2]);
+                    doc.setDrawColor(150, 150, 150); doc.setLineWidth(0.15);
+                    doc.rect(x0, ly, x1 - x0, grupoH, "FD");
+                    doc.setFont("helvetica", "bold"); doc.setFontSize(6.2);
+                    doc.text(recortar(g, x1 - x0 - 1), (x0 + x1) / 2, ly + 3.2, { align: "center" });
+                    i = j + 1;
+                }
+                ly += grupoH;
+
+                // Fila de nombres de columna (hasta 2 renglones)
+                const labelH = 7.5;
+                doc.setFont("helvetica", "bold"); doc.setFontSize(Math.min(6.5, fontSize));
+                doc.text("EMPLEADO", left + 1, ly + 5);
+                columnas.forEach((col, idx) => {
+                    const lineas = doc.splitTextToSize(col.label, colW - 1).slice(0, 2);
+                    const yBase = ly + (lineas.length === 1 ? 5 : 3);
+                    lineas.forEach((ln, k) => doc.text(ln, colX1(idx) - 0.7, yBase + k * 2.6, { align: "right" }));
+                });
+                ly += labelH;
+                doc.setDrawColor(20, 20, 20); doc.setLineWidth(0.35);
                 doc.line(left, ly, right, ly);
-                ly += 6;
-                doc.setFont("helvetica", "normal"); doc.setFontSize(9.5);
+                ly += 4.2;
+            }
+
+            function lineasGrupo(yTop, yBottom) {
+                doc.setDrawColor(170, 170, 170); doc.setLineWidth(0.15);
+                doc.line(left + nombreW, yTop, left + nombreW, yBottom);
+                cortesGrupo.forEach(i => {
+                    const x = left + nombreW + i * colW;
+                    doc.line(x, yTop, x, yBottom);
+                });
             }
 
             dibujarEncabezado();
 
             filas.forEach((f, idx) => {
-                if (ly > 297 - bottomMargin) {
+                if (ly + rowH > PAGE_H_L - bottomMargin) {
                     doc.addPage();
+                    pagina++;
                     ly = topMargin;
                     dibujarEncabezado();
                 }
                 if (idx % 2 === 1) {
                     doc.setFillColor(245, 244, 238);
-                    doc.rect(left - 2, ly - 5.5, (right - left) + 4, rowH, "F");
+                    doc.rect(left, ly - 4.1, right - left, rowH, "F");
                 }
+                lineasGrupo(ly - 4.1, ly - 4.1 + rowH);
                 doc.setTextColor(20, 20, 20);
-                doc.text(f.nombre, left, ly);
-                doc.text("$ " + fmt(f.neto), right, ly, { align: "right" });
+                doc.setFont("helvetica", "normal"); doc.setFontSize(Math.min(7.5, fontSize + 0.5));
+                doc.text(recortar(f.nombre, nombreW - 2), left + 1, ly);
+                doc.setFontSize(fontSize);
+                columnas.forEach((col, i) => {
+                    const v = col.get(f.calc) || 0;
+                    doc.setFont("helvetica", col.total ? "bold" : "normal");
+                    if (Math.abs(v) >= 0.005 || col.total) {
+                        doc.text(fmt(v), colX1(i) - 0.7, ly, { align: "right" });
+                    }
+                });
                 ly += rowH;
             });
 
-            if (ly > 297 - bottomMargin - rowH) {
+            // -------- Fila de totales --------
+            if (ly + rowH + 2 > PAGE_H_L - bottomMargin) {
                 doc.addPage();
+                pagina++;
                 ly = topMargin;
                 dibujarEncabezado();
             }
             doc.setDrawColor(20, 20, 20); doc.setLineWidth(0.5);
-            doc.line(left, ly - 4, right, ly - 4);
-            doc.setFont("helvetica", "bold"); doc.setFontSize(10.5);
-            doc.text("TOTAL", left, ly);
-            doc.text("$ " + fmt(totalNeto), right, ly, { align: "right" });
+            doc.line(left, ly - 4.1, right, ly - 4.1);
+            ly += 0.8;
+            doc.setFont("helvetica", "bold");
+            doc.setFontSize(Math.min(7.5, fontSize + 0.5));
+            doc.text(`TOTALES (${filas.length})`, left + 1, ly);
+            doc.setFontSize(fontSize);
+            totales.forEach((t, i) => {
+                doc.text(fmt(t), colX1(i) - 0.7, ly, { align: "right" });
+            });
+            ly += 6;
+
+            doc.setFont("helvetica", "italic"); doc.setFontSize(6.5);
+            doc.setTextColor(120, 120, 120);
+            doc.text("Importes en pesos ($). Se omiten las columnas de conceptos que están en cero para todos los empleados.", left, ly);
+            doc.setTextColor(20, 20, 20);
 
             const nombreArchivo = `PlanillaNetos_${(empresa.razonSocial || "empresa").replace(/\s+/g, "_")}_${periodoRef.replace(/\s+/g, "_") || "periodo"}.pdf`;
             doc.save(nombreArchivo);
         }
 
         // PDF de costeo del servicio: por cada empleado informa el neto a
-        // cobrar, el total de aportes + contribuciones patronales (la parte
-        // de seguridad social, calculada como si el empleado trabajase
-        // jornada completa —100 hs— sin importar su situación de revista
-        // real), la cuota sindical por separado y el proporcional mensual
-        // de aguinaldo. Al pie suma todo, aplica una utilidad del 10% y
-        // sobre ese total calcula el 21% de impuestos, hasta el total a
-        // facturar.
-        //
-        // Criterios aplicados (quedan también aclarados al pie del PDF):
-        // - Aportes (jubilación 11% + Ley 19.032 3% + obra social 3%) y
-        //   contribuciones patronales: recalculados sobre una base de
-        //   jornada completa (100 hs) para cada empleado, independientemente
-        //   de si su jornada real es completa, 3/4 o media.
-        // - Cuota sindical y proporcional de aguinaldo: sobre la
-        //   remuneración real de cada empleado (no se llevan a 40 hs).
-        // - Proporcional de aguinaldo mensual = (remunerativo + no
-        //   remunerativo del mes) ÷ 12.
+        // cobrar, aportes + contribuciones (sobre base fija), ART, cuota
+        // sindical y proporcional mensual de aguinaldo. Al pie suma todo,
+        // aplica administración y utilidad hasta el total a facturar.
         function generarPDFCosteoServicio(empresa, empleadosConLiq, escalaGeneral) {
             const { jsPDF } = window.jspdf;
             const doc = new jsPDF({ unit: "mm", format: "a4", orientation: "landscape" });
@@ -1893,13 +2010,11 @@
 
             // Horas mensuales tomadas como base fija para aportes,
             // contribuciones y ART (seguridad social), sin importar la
-            // jornada real del empleado (200 hs/mes en jornada completa,
-            // 100 hs/mes en media jornada, etc. — siempre se usan estas 40).
+            // jornada real del empleado.
             const HORAS_BASE_SS = 100;
             const ART_PCT = 0.052;
-            // La cuota sindical, en cambio, se calcula considerando a todos
-            // los empleados como si fueran de media jornada (100 hs/mes),
-            // sin importar su jornada real.
+            // Horas mensuales base para la cuota sindical, sin importar la
+            // jornada real del empleado.
             const HORAS_BASE_SINDICAL = 200;
 
             const filas = empleadosConLiq.map(({ emp, liq }) => {
@@ -1907,10 +2022,7 @@
                 if (!periodoRef) periodoRef = liq.periodoLabel || liq.periodo || "";
 
                 // Básico y no remunerativo a jornada completa (200 hs/mes),
-                // independiente de la jornada real del empleado: si usa la
-                // escala general, salen directo de la escala; si están
-                // cargados a mano para una jornada reducida, se llevan a
-                // jornada completa dividiendo por la fracción de esa jornada.
+                // independiente de la jornada real del empleado.
                 const usaEscala = liq.usarEscalaGeneral !== false;
                 const basicoJornadaCompleta = usaEscala
                     ? (parseFloat((escalaGeneral.basicos || {})[emp.categoria]) || 0)
@@ -1925,18 +2037,15 @@
                 const baseNoRemunSS = valorHoraNoRemunCompleta * HORAS_BASE_SS;
 
                 const contribPatronalesPct = parseFloat(escalaGeneral.contribucionesPatronalesPct) || 0;
-                const aportesYContrib = baseAportesSS * 0.11   // jubilación (base 100 hs)
-                    + baseAportesSS * 0.03                     // Ley 19.032 (base 100 hs)
+                const aportesYContrib = baseAportesSS * 0.11   // jubilación
+                    + baseAportesSS * 0.03                     // Ley 19.032
                     + calc.obraSocial                          // obra social: igual que en el recibo real
-                    + baseAportesSS * contribPatronalesPct / 100; // contribuciones patronales (base 40 hs)
+                    + baseAportesSS * contribPatronalesPct / 100; // contribuciones patronales
 
-                // ART 5,2%, sobre remunerativo y no remunerativo, ambos
-                // proporcionales a la base fija de 40 hs.
+                // ART 5,2%, sobre remunerativo y no remunerativo.
                 const art = (baseAportesSS + baseNoRemunSS) * ART_PCT;
 
-                // Cuota sindical 4,5%, sobre remunerativo y no remunerativo,
-                // ambos proporcionales a la base fija de media jornada
-                // (100 hs), para todos los empleados por igual.
+                // Cuota sindical 4,5%, sobre remunerativo y no remunerativo.
                 const baseSindicalRemun = valorHoraCompleta * HORAS_BASE_SINDICAL;
                 const baseSindicalNoRemun = valorHoraNoRemunCompleta * HORAS_BASE_SINDICAL;
                 const sindical = emp.afiliadoSindicato ? (baseSindicalRemun + baseSindicalNoRemun) * 0.045 : 0;
@@ -2032,7 +2141,7 @@
             doc.text("$ " + fmt(subtotalCostoLaboral), colSub, ly, { align: "right" });
             ly += 14;
 
-            // -------- Resumen de facturación (utilidad + impuestos) --------
+            // -------- Resumen de facturación --------
             if (ly > pageBottom - 45) {
                 doc.addPage();
                 ly = topMargin;
@@ -2236,6 +2345,30 @@
                         </div>
                     </div>
                     <div className="card">
+                        <h3>Día del Empleado de Comercio</h3>
+                        <div className="grid">
+                            <div className="field">
+                                <label>Monto jornada completa ($)</label>
+                                <input type="text" placeholder="Vacío = (básico + antig. + present.) ÷ 25"
+                                    value={escalaGeneral.diaComercioMonto || ""}
+                                    onChange={e => updateEscalaGeneral({ diaComercioMonto: e.target.value })} />
+                            </div>
+                            <div className="field">
+                                <label>Concepto</label>
+                                <input type="text" value={escalaGeneral.diaComercioConcepto || ""}
+                                    onChange={e => updateEscalaGeneral({ diaComercioConcepto: e.target.value })} />
+                            </div>
+                        </div>
+                        <div className="hint">
+                            Pago remunerativo que se suma solo a los empleados que tengan tildado "Corresponde
+                            Día del Empleado de Comercio" en su pestaña "Liquidación". El monto se ajusta por
+                            jornada (100% / 75% / 50%). Si dejás el monto vacío (recomendado), a cada empleado se
+                            le calcula su valor día: (básico + antigüedad + presentismo) ÷ 25, con el
+                            presentismo del 8,33% solo si lo tiene tildado. Si cargás un monto fijo, se usa
+                            ese monto en lugar del cálculo.
+                        </div>
+                    </div>
+                    <div className="card">
                         <h3>Contribuciones patronales del recibo de sueldo (Sección II, Dec. 407/2026)</h3>
                         <div className="grid">
                             <div className="field">
@@ -2327,7 +2460,8 @@
                             empresa_razonSocial, empresa_cuit, empleado_nombre, empleado_cuil, empleado_legajo,
                             categoria, jornada, fecha_ingreso, periodo, fecha_pago, basico, antiguedad_pct,
                             antiguedad_monto, presentismo_monto, horas_extra_50, horas_extra_100,
-                            horas_inasistencia, inasistencias_monto,
+                            horas_inasistencia, inasistencias_monto, plus_vacacional_dias,
+                            plus_vacacional_monto, dia_empleado_comercio_monto,
                             otras_remuneraciones_concepto, otras_remuneraciones_monto, no_remunerativo_concepto,
                             no_remunerativo_base, no_remunerativo_antiguedad, no_remunerativo_presentismo,
                             no_remunerativo_total, jubilacion, ley_19032, obra_social, cuota_sindical,
@@ -2523,6 +2657,14 @@
                                 onChange={e => updateLiq({ presentismo: e.target.checked })} />
                             <label htmlFor="presentismo">Corresponde presentismo (8,33% aprox.)</label>
                         </div>
+                        <div className="field checkbox">
+                            <input type="checkbox" id="diaComercio" checked={!!liq.diaEmpleadoComercio}
+                                onChange={e => updateLiq({ diaEmpleadoComercio: e.target.checked })} />
+                            <label htmlFor="diaComercio">
+                                Corresponde Día del Empleado de Comercio
+                                {liq.diaEmpleadoComercio ? ` ($ ${fmt(calc.diaComercioMonto)})` : ""}
+                            </label>
+                        </div>
                     </div>
 
                     <div className="card">
@@ -2572,6 +2714,7 @@
                                 <tr><td className="label">Horas extra 100%</td><td className="amount">$ {fmt(calc.he100)}</td></tr>
                                 <tr><td className="label">Inasistencias ({calc.horasInasistencia || 0} hs)</td><td className="amount">$ -{fmt(calc.inasistenciasMonto)}</td></tr>
                                 <tr><td className="label">Plus vacacional ({calc.diasVacaciones} día/s)</td><td className="amount">$ {fmt(calc.plusVacacional)}</td></tr>
+                                <tr><td className="label">{calc.diaComercioConcepto}</td><td className="amount">$ {fmt(calc.diaComercioMonto)}</td></tr>
                                 <tr><td className="label">Otras remuneraciones</td><td className="amount">$ {fmt(calc.otrosRemun)}</td></tr>
                                 <tr><td className="label">Asignación no remunerativa</td><td className="amount">$ {fmt(calc.noRemunerativoBase)}</td></tr>
                                 <tr><td className="label">Antigüedad s/no remunerativo</td><td className="amount">$ {fmt(calc.antigNoRemunMonto)}</td></tr>
@@ -2741,6 +2884,7 @@
                                 {calc.he100 > 0 && <tr><td>Horas extra 100%</td><td className="num">$ {fmt(calc.he100)}</td><td className="num"></td><td className="num"></td></tr>}
                                 {calc.inasistenciasMonto > 0 && <tr><td>Inasistencias ({calc.horasInasistencia} hs)</td><td className="num">$ -{fmt(calc.inasistenciasMonto)}</td><td className="num"></td><td className="num"></td></tr>}
                                 {calc.plusVacacional > 0 && <tr><td>Plus vacacional ({calc.diasVacaciones} día/s)</td><td className="num">$ {fmt(calc.plusVacacional)}</td><td className="num"></td><td className="num"></td></tr>}
+                                {calc.diaComercioMonto > 0 && <tr><td>{calc.diaComercioConcepto}</td><td className="num">$ {fmt(calc.diaComercioMonto)}</td><td className="num"></td><td className="num"></td></tr>}
                                 {calc.otrosRemun > 0 && <tr><td>{liq.otrosRemunerativosConcepto || "Otras remuneraciones"}</td><td className="num">$ {fmt(calc.otrosRemun)}</td><td className="num"></td><td className="num"></td></tr>}
                                 {calc.noRemunerativoBase > 0 && <tr><td>{liq.noRemunerativosConcepto || "Asig. no remunerativa"}</td><td className="num"></td><td className="num">$ {fmt(calc.noRemunerativoBase)}</td><td className="num"></td></tr>}
                                 {calc.antigNoRemunMonto > 0 && <tr><td>Antigüedad s/no remunerativo</td><td className="num"></td><td className="num">$ {fmt(calc.antigNoRemunMonto)}</td><td className="num"></td></tr>}
@@ -2810,6 +2954,7 @@
                 otrasDeducciones: "", otrasDeduccionesConcepto: "",
                 aguinaldoIncluirHorasExtra: false,
                 diasVacaciones: "",
+                diaEmpleadoComercio: false,
             };
         }
 
