@@ -1811,6 +1811,9 @@
             });
 
             const TODAS_COLUMNAS = [
+                // El neto va primero (es el dato que se usa para transferir);
+                // el resto de las columnas son informativas.
+                { grupo: "NETO", label: "Neto a cobrar", get: c => c.neto, total: true },
                 { grupo: "REMUNERATIVO", label: "Básico", get: c => c.basico },
                 { grupo: "REMUNERATIVO", label: "Antigüedad", get: c => c.antigMonto },
                 { grupo: "REMUNERATIVO", label: "Presentismo", get: c => c.presentismoMonto },
@@ -1831,7 +1834,6 @@
                 { grupo: "DEDUCCIONES", label: "Sindical 4,5%", get: c => c.sindical },
                 { grupo: "DEDUCCIONES", label: "Otras deducc.", get: c => c.otrasDeducciones },
                 { grupo: "DEDUCCIONES", label: "Total deducc.", get: c => c.totalDeducciones, total: true },
-                { grupo: "NETO", label: "Neto a cobrar", get: c => c.neto, total: true },
             ];
 
             const columnas = TODAS_COLUMNAS.filter(col =>
@@ -1949,6 +1951,9 @@
                     doc.setFillColor(245, 244, 238);
                     doc.rect(left, ly - 4.1, right - left, rowH, "F");
                 }
+                // Sombreado de la columna de neto (la primera), para destacarla
+                doc.setFillColor(225, 231, 242);
+                doc.rect(left + nombreW, ly - 4.1, colW, rowH, "F");
                 lineasGrupo(ly - 4.1, ly - 4.1 + rowH);
                 doc.setTextColor(20, 20, 20);
                 doc.setFont("helvetica", "normal"); doc.setFontSize(Math.min(7.5, fontSize + 0.5));
@@ -1976,6 +1981,8 @@
             ly += 0.8;
             doc.setFont("helvetica", "bold");
             doc.setFontSize(Math.min(7.5, fontSize + 0.5));
+            doc.setFillColor(225, 231, 242);
+            doc.rect(left + nombreW, ly - 4.1, colW, rowH, "F");
             doc.text(`TOTALES (${filas.length})`, left + 1, ly);
             doc.setFontSize(fontSize);
             totales.forEach((t, i) => {
