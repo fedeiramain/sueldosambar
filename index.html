@@ -1562,16 +1562,21 @@
             TRES_CUARTOS: 0.75,
             MEDIA: 0.5,
         };
+        // Horas mensuales de la jornada completa: la "jornada parcial" se
+        // calcula como proporción de este valor (horas declaradas ÷ 200).
+        const HORAS_JORNADA_COMPLETA = 200;
         const JORNADA_LABEL = {
             COMPLETA: "Jornada completa",
             TRES_CUARTOS: "Tres cuartos de jornada",
             MEDIA: "Media jornada",
+            PARCIAL: "Jornada parcial",
         };
         // Forma corta, para espacios reducidos (ej. la línea de categoría en el PDF)
         const JORNADA_LABEL_CORTO = {
             COMPLETA: "Completa",
             TRES_CUARTOS: "3/4 jornada",
             MEDIA: "Media jornada",
+            PARCIAL: "Jornada Parcial",
         };
 
         // Horas mensuales "base" de cada jornada, usadas para calcular el
@@ -1583,12 +1588,41 @@
             MEDIA: 100,
         };
 
-        function fraccionJornada(jornada) {
+        // Horas mensuales declaradas para un empleado en "jornada parcial"
+        // (limitadas a 1–200). Si no cargó horas, se toma jornada completa.
+        function horasParcial(emp) {
+            const h = parseFloat(emp && emp.horasParcial);
+            if (!h || h <= 0) return HORAS_JORNADA_COMPLETA;
+            return Math.min(h, HORAS_JORNADA_COMPLETA);
+        }
+
+        // Fracción de la jornada completa. Para "jornada parcial" es
+        // proporcional a las horas declaradas (ej. 120 hs ÷ 200 = 60%).
+        function fraccionJornada(jornada, emp) {
+            if (jornada === "PARCIAL") return horasParcial(emp) / HORAS_JORNADA_COMPLETA;
             return JORNADA_FRACCION[jornada] !== undefined ? JORNADA_FRACCION[jornada] : 1;
         }
 
-        function horasBaseJornada(jornada) {
+        // Horas base para el valor hora de las inasistencias. En jornada
+        // parcial son las mismas horas mensuales declaradas.
+        function horasBaseJornada(jornada, emp) {
+            if (jornada === "PARCIAL") return horasParcial(emp);
             return JORNADA_HORAS_BASE[jornada] !== undefined ? JORNADA_HORAS_BASE[jornada] : 200;
+        }
+
+        // true si el empleado está en jornada parcial pero no tiene horas cargadas.
+        function faltanHorasParcial(emp) {
+            return !!emp && emp.jornada === "PARCIAL" && !(parseFloat(emp.horasParcial) > 0);
+        }
+
+        // Texto de la jornada para pantalla y PDF (en parcial agrega las horas).
+        function jornadaTexto(emp, corto) {
+            const j = (emp && emp.jornada) || "COMPLETA";
+            const base = (corto ? JORNADA_LABEL_CORTO : JORNADA_LABEL)[j] || "";
+            // En el PDF (forma corta) va solo "Jornada Parcial": las horas ya
+            // figuran en la columna Unidades del sueldo básico.
+            if (j === "PARCIAL" && !corto) return `${base} (${horasParcial(emp).toLocaleString("es-AR")} hs/mes)`;
+            return base;
         }
 
         function defaultEscalaGeneral() {
@@ -1687,7 +1721,7 @@
         function calcularLiquidacion(emp, liq, escalaGeneral) {
             escalaGeneral = escalaGeneral || defaultEscalaGeneral();
             const jornada = emp.jornada || "COMPLETA";
-            const fraccion = fraccionJornada(jornada);
+            const fraccion = fraccionJornada(jornada, emp);
 
             // Básico y no remunerativo: por defecto se toman de la escala salarial
             // general (según categoría) ajustados por la jornada del empleado.
@@ -1724,7 +1758,7 @@
             // horas mensuales "base" de la jornada del empleado (200 hs jornada
             // completa, 140 hs tres cuartos, 100 hs media jornada), a diferencia
             // del valor hora de las horas extra (que siempre usa 200).
-            const horasBaseInasistencia = horasBaseJornada(jornada);
+            const horasBaseInasistencia = horasBaseJornada(jornada, emp);
             const baseInasistencia = basico + antigBasicoMonto;
 
             const valorHoraInasistencia =
@@ -1829,7 +1863,7 @@
             const costoTotalLaboral = totalRemunerativo + noRemunerativo + contribSS + contribOS + contribART + contribSVCVO;
 
             return {
-                jornada, fraccion, usarEscala, basico, basicoEscala, noRemEscala,
+                jornada, fraccion, jornadaLabel: jornadaTexto(emp, false), jornadaLabelCorto: jornadaTexto(emp, true), usarEscala, basico, basicoEscala, noRemEscala,
                 aniosAntig, antigPct, antigMonto, antigBasicoMonto, antigHEMonto, valorHora, he50, he100,
                 horasBaseInasistencia, valorHoraInasistencia, horasInasistencia, inasistenciasMonto,
                 valorDiaVacaciones, diasVacaciones, plusVacacional, otrosRemun,
@@ -1900,7 +1934,7 @@
                 empleado_cuil: emp.cuil || "",
                 empleado_legajo: emp.legajo || "",
                 categoria: emp.categoria || "",
-                jornada: JORNADA_LABEL[calc.jornada] || "",
+                jornada: calc.jornadaLabel || "",
                 fecha_ingreso: emp.fechaIngreso || "",
                 periodo: liq.periodoLabel || liq.periodo || "",
                 fecha_pago: liq.fechaPago || "",
@@ -2084,7 +2118,7 @@
             doc.text(`Fecha de pago: ${liq.fechaPago || "-"}`, col2, ly);
             doc.text(`Antigüedad: ${calc.aniosAntig} año(s)`, col3, ly);
             ly += 4.2;
-            doc.text(`Categoría: ${emp.categoria || "-"} · ${JORNADA_LABEL_CORTO[calc.jornada] || "-"}`, col1, ly);
+            doc.text(`Categoría: ${emp.categoria || "-"} · ${calc.jornadaLabelCorto || "-"}`, col1, ly);
             doc.text(`Fecha de ingreso: ${emp.fechaIngreso || "-"}`, col2, ly);
 
             ly += 2.5;
@@ -2197,13 +2231,13 @@
             // fila ("unidades") muestra la cantidad (horas, días) o el
             // porcentaje aplicado, según el concepto.
             const conceptosTabla = [
-                ["Sueldo básico", calc.basico, 0, 0, ""],
+                ["Sueldo básico", calc.basico, 0, 0, calc.jornada === "PARCIAL" ? calc.horasBaseInasistencia.toLocaleString("es-AR") : ""],
                 ["Antigüedad", calc.antigMonto, 0, 0, ""],
                 ["Presentismo", calc.presentismoMonto, 0, 0, calc.presentismoMonto > 0 ? "8,33%" : ""],
-                ["Horas extra al 50%", calc.he50 || 0, 0, 0, (parseFloat(liq.horasExtra50) || 0) > 0 ? `${liq.horasExtra50} hs` : ""],
-                ["Horas extra al 100%", calc.he100 || 0, 0, 0, (parseFloat(liq.horasExtra100) || 0) > 0 ? `${liq.horasExtra100} hs` : ""],
-                ["Inasistencias", -(calc.inasistenciasMonto || 0), 0, 0, calc.horasInasistencia > 0 ? `${calc.horasInasistencia} hs` : ""],
-                ["Plus vacacional", calc.plusVacacional, 0, 0, calc.diasVacaciones > 0 ? `${calc.diasVacaciones} día/s` : ""],
+                ["Horas extra al 50%", calc.he50 || 0, 0, 0, (parseFloat(liq.horasExtra50) || 0) > 0 ? `${liq.horasExtra50}` : ""],
+                ["Horas extra al 100%", calc.he100 || 0, 0, 0, (parseFloat(liq.horasExtra100) || 0) > 0 ? `${liq.horasExtra100}` : ""],
+                ["Inasistencias", -(calc.inasistenciasMonto || 0), 0, 0, calc.horasInasistencia > 0 ? `${calc.horasInasistencia}` : ""],
+                ["Plus vacacional", calc.plusVacacional, 0, 0, calc.diasVacaciones > 0 ? `${calc.diasVacaciones}` : ""],
                 [liq.otrosRemunerativosConcepto || "Otras remuneraciones", calc.otrosRemun, 0, 0, ""],
                 [liq.noRemunerativosConcepto || "Asignación no remunerativa", 0, calc.noRemunerativoBase, 0, ""],
                 ["Antigüedad s/no remunerativo", 0, calc.antigNoRemunMonto, 0, ""],
@@ -2385,7 +2419,7 @@
                 doc.text(`Legajo: ${emp.legajo || "-"}`, col1, ly);
                 doc.text(`Fecha de ingreso: ${emp.fechaIngreso || "-"}`, col2, ly);
                 ly += 5;
-                doc.text(`Categoría: ${emp.categoria || "-"} · ${JORNADA_LABEL_CORTO[calc.jornada] || "-"}`, col1, ly);
+                doc.text(`Categoría: ${emp.categoria || "-"} · ${calc.jornadaLabelCorto || "-"}`, col1, ly);
                 doc.text(`Base tomada: ${liq.periodoLabel || liq.periodo || "-"}`, col2, ly);
 
                 ly += 4;
@@ -2944,7 +2978,8 @@
                         </div>
                         <div className="hint">
                             Este monto también se ajusta de forma proporcional a la jornada de cada empleado
-                            (100% jornada completa, 75% tres cuartos, 50% media jornada).
+                            (100% jornada completa, 75% tres cuartos, 50% media jornada; en jornada parcial,
+                            horas declaradas ÷ 200).
                         </div>
                     </div>
                     <div className="card">
@@ -3103,8 +3138,21 @@
                                 <option value="COMPLETA">Jornada completa</option>
                                 <option value="TRES_CUARTOS">Tres cuartos de jornada</option>
                                 <option value="MEDIA">Media jornada</option>
+                                <option value="PARCIAL">Jornada parcial (cargar horas)</option>
                             </select>
                         </div>
+                        {emp.jornada === "PARCIAL" && (
+                            <div className="field">
+                                <label>Horas mensuales (jornada parcial)</label>
+                                <input type="text" placeholder="Ej. 120" value={emp.horasParcial || ""}
+                                    onChange={e => updateEmp({ horasParcial: e.target.value })} />
+                                <div className="hint">
+                                    {parseFloat(emp.horasParcial) > 0
+                                        ? `${horasParcial(emp).toLocaleString("es-AR")} hs de 200 = ${(horasParcial(emp) / 2).toLocaleString("es-AR", { maximumFractionDigits: 2 })}% del básico y del no remunerativo.`
+                                        : <span style={{ color: "var(--red)", fontWeight: 600 }}>⚠ Cargá las horas mensuales (sobre 200). Sin este dato no se puede emitir el recibo.</span>}
+                                </div>
+                            </div>
+                        )}
                         <div className="field">
                             <label>Fecha de ingreso</label>
                             <input type="date" value={emp.fechaIngreso} onChange={e => updateEmp({ fechaIngreso: e.target.value })} />
@@ -3152,7 +3200,7 @@
                                 onChange={e => updateLiq({ usarEscalaGeneral: e.target.checked })} />
                             <label htmlFor="usarEscala">
                                 Usar escala salarial general (básico y no remunerativo ajustados por jornada:
-                                {" "}{JORNADA_LABEL[calc.jornada] || "jornada completa"})
+                                {" "}{calc.jornadaLabel || "jornada completa"})
                             </label>
                         </div>
                         <div className="grid">
@@ -3204,7 +3252,7 @@
                                 <label>Inasistencias (cantidad de hs.)</label>
                                 <input type="text" value={liq.horasInasistencia} onChange={e => updateLiq({ horasInasistencia: e.target.value })} />
                                 <div className="hint">
-                                    Valor hora: básico ÷ {calc.horasBaseInasistencia} hs ({JORNADA_LABEL[calc.jornada] || "jornada completa"}).
+                                    Valor hora: básico ÷ {calc.horasBaseInasistencia} hs ({calc.jornadaLabel || "jornada completa"}).
                                 </div>
                             </div>
                             <div className="field">
@@ -3225,7 +3273,7 @@
                             Valor hora (horas extra) = básico ÷ 200. La antigüedad se calcula sobre básico + horas extra. Las horas extra se calculan solas: cantidad
                             de horas × valor hora × 1,5 (al 50%) o × 2 (al 100%). Las inasistencias usan un valor
                             hora propio, según la jornada del empleado: básico ÷ 200 hs (jornada completa), ÷ 140
-                            hs (tres cuartos) o ÷ 100 hs (media jornada), y se descuentan del básico. El plus
+                            hs (tres cuartos), ÷ 100 hs (media jornada) o ÷ las horas declaradas (jornada parcial), y se descuentan del básico. El plus
                             vacacional (Art. 155 LCT) funciona igual que las horas extra: valor día = básico ÷ 25,
                             y el monto sale solo al cargar la cantidad de días de vacaciones que le corresponden
                             al empleado. No hace falta cargar ningún importe en pesos a mano, solo las cantidades.
@@ -3388,7 +3436,7 @@
                             <div><span>Antigüedad</span>{calc.aniosAntig} año(s)</div>
                             <div><span>Período</span>{liq.periodoLabel || "-"}</div>
                             <div><span>Fecha de pago</span>{liq.fechaPago || "-"}</div>
-                            <div><span>Jornada</span>{JORNADA_LABEL[calc.jornada] || "-"}</div>
+                            <div><span>Jornada</span>{calc.jornadaLabel || "-"}</div>
                         </div>
 
                         <div className="section-h">Sección II — Contribuciones y costo laboral a cargo del empleador (informativo)</div>
@@ -3663,7 +3711,18 @@
                 e.target.value = "";
             }
 
+            // Bloquea la emisión si hay empleados en jornada parcial sin horas
+            // cargadas. Devuelve true si se puede seguir.
+            function validarHorasParcial(lista) {
+                const faltan = lista.filter(faltanHorasParcial);
+                if (faltan.length === 0) return true;
+                const nombres = faltan.map(e => "• " + (e.nombre || "(sin nombre)")).join("\n");
+                alert(`No se puede generar: ${faltan.length === 1 ? "este empleado está" : "estos empleados están"} en jornada parcial sin horas mensuales cargadas:\n\n${nombres}\n\nCargá las horas en "Datos del empleado" → Jornada.`);
+                return false;
+            }
+
             function onGenerarPDF() {
+                if (!validarHorasParcial([emp])) return;
                 if (!emp.nombre || !liqResuelto.periodo || (!calc.usarEscala && !liqResuelto.basico) || (calc.usarEscala && !emp.categoria)) {
                     mostrarToast("Completá al menos nombre, categoría/período o sueldo básico antes de emitir el recibo.");
                     return;
@@ -3673,6 +3732,7 @@
             }
 
             function onGenerarPDFAguinaldo(aguinaldo) {
+                if (!validarHorasParcial([emp])) return;
                 if (!emp.nombre || !liqResuelto.periodo) {
                     mostrarToast("Completá al menos nombre y período antes de emitir el aguinaldo.");
                     return;
@@ -3686,6 +3746,7 @@
                     mostrarToast("Todavía no cargaste ningún empleado.");
                     return;
                 }
+                if (!validarHorasParcial(empleados)) return;
                 const empleadosConLiq = empleados.map(e => ({
                     emp: e,
                     liq: resolverLiq(liqPorEmpleado[e.id] || defaultLiq(), periodoGeneral)
@@ -3699,6 +3760,7 @@
                     mostrarToast("Todavía no cargaste ningún empleado.");
                     return;
                 }
+                if (!validarHorasParcial(empleados)) return;
                 const empleadosConLiq = empleados.map(e => ({
                     emp: e,
                     liq: resolverLiq(liqPorEmpleado[e.id] || defaultLiq(), periodoGeneral)
@@ -3712,6 +3774,7 @@
                     mostrarToast("Todavía no cargaste ningún empleado.");
                     return;
                 }
+                if (!validarHorasParcial(empleados)) return;
                 const empleadosConLiq = empleados
                     .filter(e => !CUILS_EXCLUIDOS_REPORTES.includes(soloDigitosCuil(e.cuil)))
                     .map(e => ({
@@ -3727,6 +3790,7 @@
                     mostrarToast("Todavía no cargaste ningún empleado.");
                     return;
                 }
+                if (!validarHorasParcial(empleados)) return;
                 const empleadosConLiq = empleados
                     .filter(e => !CUILS_EXCLUIDOS_REPORTES.includes(soloDigitosCuil(e.cuil)))
                     .map(e => ({
@@ -3763,6 +3827,7 @@
                     mostrarToast("Todavía no cargaste ningún empleado.");
                     return;
                 }
+                if (!validarHorasParcial(empleados)) return;
                 setWebhookEnviando(true);
                 setWebhookLog([]);
                 const resultados = [];
@@ -3809,7 +3874,7 @@
                                     <div className="topline">
                                         <div>
                                             <h1>{emp.nombre || "Nuevo empleado"}</h1>
-                                            <div className="sub">{emp.categoria || "Sin categoría asignada"} · {emp.legajo ? "Legajo " + emp.legajo : "Sin legajo"} · {JORNADA_LABEL[emp.jornada || "COMPLETA"]}</div>
+                                            <div className="sub">{emp.categoria || "Sin categoría asignada"} · {emp.legajo ? "Legajo " + emp.legajo : "Sin legajo"} · {jornadaTexto(emp)}</div>
                                         </div>
                                         <span className="badge">CCT 130/75</span>
                                     </div>
