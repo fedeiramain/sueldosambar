@@ -1632,6 +1632,7 @@
                 basicos,
                 noRemunerativo: "",
                 noRemunerativoConcepto: "Asignación no remunerativa (paritaria)",
+                sumaFija: "",
                 contribucionesPatronalesPct: "",
                 svcvoMonto: "",
                 contribSSPct: "18",
@@ -1821,7 +1822,15 @@
 
             const totalDeducciones = jubilacion + ley19032 + obraSocial + sindical + otrasDeducciones;
 
-            const totalBruto = totalRemunerativo + noRemunerativo;
+            // Suma fija (Escala salarial general): monto extraordinario, no
+            // remunerativo, proporcional a la jornada. NO genera aportes ni
+            // contribuciones, ni antigüedad/presentismo, ni entra al aguinaldo:
+            // va directo al neto. Se suma solo al bruto y al costo laboral.
+            const sumaFija = (parseFloat(escalaGeneral.sumaFija) || 0) * fraccion;
+            const sumaFijaConcepto = "Suma Fija";
+            const noRemunerativoTotal = noRemunerativo + sumaFija;
+
+            const totalBruto = totalRemunerativo + noRemunerativoTotal;
             const neto = totalBruto - totalDeducciones;
 
             // Contribuciones a cargo del empleador — puramente informativas, NO
@@ -1860,7 +1869,7 @@
             const contribOS = baseCalculoOS * contribOSPct / 100;
             const contribART = baseContribOSART * contribARTPct / 100;
             const contribSVCVO = parseFloat(escalaGeneral.svcvoMonto) || 0;
-            const costoTotalLaboral = totalRemunerativo + noRemunerativo + contribSS + contribOS + contribART + contribSVCVO;
+            const costoTotalLaboral = totalRemunerativo + noRemunerativo + sumaFija + contribSS + contribOS + contribART + contribSVCVO;
 
             return {
                 jornada, fraccion, jornadaLabel: jornadaTexto(emp, false), jornadaLabelCorto: jornadaTexto(emp, true), usarEscala, basico, basicoEscala, noRemEscala,
@@ -1869,6 +1878,7 @@
                 valorDiaVacaciones, diasVacaciones, plusVacacional, otrosRemun,
                 presentismoMonto, totalRemunerativo,
                 noRemunerativoBase, antigNoRemunMonto, presentismoNoRemunMonto, noRemunerativo,
+                sumaFija, sumaFijaConcepto, noRemunerativoTotal,
                 jubilacion, ley19032, obraSocial, sindical, otrasDeducciones, totalDeducciones,
                 totalBruto, neto, contribPatronalesPct, contribucionesPatronales,
                 contribSS, contribOS, contribART, contribSVCVO, costoTotalLaboral,
@@ -1955,6 +1965,8 @@
                 no_remunerativo_antiguedad: n(calc.antigNoRemunMonto),
                 no_remunerativo_presentismo: n(calc.presentismoNoRemunMonto),
                 no_remunerativo_total: n(calc.noRemunerativo),
+                suma_fija_concepto: calc.sumaFija > 0 ? calc.sumaFijaConcepto : "",
+                suma_fija_monto: n(calc.sumaFija),
                 jubilacion: n(calc.jubilacion),
                 ley_19032: n(calc.ley19032),
                 obra_social: n(calc.obraSocial),
@@ -2242,6 +2254,7 @@
                 [liq.noRemunerativosConcepto || "Asignación no remunerativa", 0, calc.noRemunerativoBase, 0, ""],
                 ["Antigüedad s/no remunerativo", 0, calc.antigNoRemunMonto, 0, ""],
                 ["Presentismo s/no remunerativo", 0, calc.presentismoNoRemunMonto, 0, calc.presentismoNoRemunMonto > 0 ? "8,33%" : ""],
+                [calc.sumaFijaConcepto, 0, calc.sumaFija, 0, ""],
                 ["Jubilación (Ley 24.241)", 0, 0, calc.jubilacion, "11%"],
                 ["Ley 19.032 (INSSJP/PAMI)", 0, 0, calc.ley19032, "3%"],
                 ["Obra Social Aporte Unificado", 0, 0, calc.obraSocial, "3%"],
@@ -2270,7 +2283,7 @@
             doc.setFont("helvetica", "bold"); doc.setFontSize(7.2);
             doc.text("TOTALES", left + 4, ly);
             doc.text("$ " + fmt(calc.totalRemunerativo), xRemun, ly, { align: "right" });
-            doc.text("$ " + fmt(calc.noRemunerativo), xNoRemun, ly, { align: "right" });
+            doc.text("$ " + fmt(calc.noRemunerativoTotal), xNoRemun, ly, { align: "right" });
             doc.text("$ " + fmt(calc.totalDeducciones), xDeduc, ly, { align: "right" });
             ly += 3.5;
 
@@ -2304,6 +2317,14 @@
             doc.text(legalLineas, left + 4, ly);
             doc.setTextColor(20, 20, 20);
             ly += legalLineas.length * 2.3 + 1.5;
+
+            // ---- Copia informativa: sin firma, cierra el recuadro acá ----
+            if (tag === "INFORMATIVO") {
+                const bottomInf = ly - 0.5;
+                doc.setDrawColor(20, 20, 20); doc.setLineWidth(0.4);
+                doc.rect(left, top, right - left, bottomInf - top);
+                return bottomInf;
+            }
 
             // ---- Firma, pegada al final del contenido (no al pie fijo de la hoja) ----
             doc.setDrawColor(20, 20, 20); doc.setLineWidth(0.2);
@@ -2350,6 +2371,31 @@
 
         // PDF con todos los recibos cargados, en un solo archivo (una hoja
         // por empleado, con ORIGINAL y DUPLICADO apilados cuando entran).
+        // PDF informativo con todos los recibos: una sola copia por empleado
+        // (sin duplicado ni firma), uno debajo del otro, aprovechando la hoja
+        // al máximo. Para consulta interna, no reemplaza al recibo firmado.
+        function generarPDFInformativo(empresa, empleadosConLiq, escalaGeneral) {
+            const { jsPDF } = window.jspdf;
+            const doc = new jsPDF({ unit: "mm", format: "a4" });
+            let periodoRef = "";
+            let y = PAGE_MARGIN;
+            empleadosConLiq.forEach(({ emp, liq }) => {
+                const calc = calcularLiquidacion(emp, liq, escalaGeneral);
+                // Se mide la altura del recibo dibujándolo en un documento
+                // auxiliar, para saber si entra en lo que queda de la hoja.
+                const medidor = new jsPDF({ unit: "mm", format: "a4" });
+                const alto = dibujarPaginaReciboCompleta(medidor, empresa, emp, liq, calc, "INFORMATIVO", 0);
+                if (y > PAGE_MARGIN && y + alto > PAGE_H - PAGE_MARGIN) {
+                    doc.addPage();
+                    y = PAGE_MARGIN;
+                }
+                y = dibujarPaginaReciboCompleta(doc, empresa, emp, liq, calc, "INFORMATIVO", y) + GAP_COPIAS;
+                if (!periodoRef) periodoRef = liq.periodo;
+            });
+            const nombreArchivo = `RecibosInformativos_${(empresa.razonSocial || "empresa").replace(/\s+/g, "_")}_${periodoRef || "periodo"}.pdf`;
+            doc.save(nombreArchivo);
+        }
+
         function generarPDFTodos(empresa, empleadosConLiq, escalaGeneral) {
             const { jsPDF } = window.jspdf;
             const doc = new jsPDF({ unit: "mm", format: "a4" });
@@ -2983,6 +3029,22 @@
                         </div>
                     </div>
                     <div className="card">
+                        <h3>Suma Fija (no remunerativa, sin aportes)</h3>
+                        <div className="grid">
+                            <div className="field">
+                                <label>Monto jornada completa ($)</label>
+                                <input type="text" placeholder="Ej. 40000" value={escalaGeneral.sumaFija || ""}
+                                    onChange={e => updateEscalaGeneral({ sumaFija: e.target.value })} />
+                            </div>
+                        </div>
+                        <div className="hint">
+                            Monto extraordinario que va directo al neto: no genera aportes ni contribuciones
+                            (jubilación, Ley 19.032, obra social, sindical, ART), ni antigüedad ni presentismo, y
+                            no entra en la base del aguinaldo. Se ajusta proporcional a la jornada de cada
+                            empleado, igual que el básico. Dejalo vacío los meses que no corresponda.
+                        </div>
+                    </div>
+                    <div className="card">
                         <h3>Contribuciones patronales del recibo de sueldo (Sección II, Dec. 407/2026)</h3>
                         <div className="grid">
                             <div className="field">
@@ -3077,7 +3139,7 @@
                             horas_inasistencia, inasistencias_monto,
                             otras_remuneraciones_concepto, otras_remuneraciones_monto, no_remunerativo_concepto,
                             no_remunerativo_base, no_remunerativo_antiguedad, no_remunerativo_presentismo,
-                            no_remunerativo_total, jubilacion, ley_19032, obra_social, cuota_sindical,
+                            no_remunerativo_total, suma_fija_concepto, suma_fija_monto, jubilacion, ley_19032, obra_social, cuota_sindical,
                             otras_deducciones_concepto, otras_deducciones_monto, total_remunerativo,
                             total_deducciones, total_bruto, neto_a_cobrar, contribuciones_patronales_pct,
                             contribuciones_patronales_monto.
@@ -3336,6 +3398,7 @@
                                 <tr><td className="label">Asignación no remunerativa</td><td className="amount">$ {fmt(calc.noRemunerativoBase)}</td></tr>
                                 <tr><td className="label">Antigüedad s/no remunerativo</td><td className="amount">$ {fmt(calc.antigNoRemunMonto)}</td></tr>
                                 <tr><td className="label">Presentismo s/no remunerativo</td><td className="amount">$ {fmt(calc.presentismoNoRemunMonto)}</td></tr>
+                                <tr><td className="label">{calc.sumaFijaConcepto} (sin aportes)</td><td className="amount">$ {fmt(calc.sumaFija)}</td></tr>
                                 <tr className="total"><td>Total bruto</td><td className="amount">$ {fmt(calc.totalBruto)}</td></tr>
 
                                 <tr><td className="calc-section-title" colSpan="2">Deducciones</td></tr>
@@ -3505,6 +3568,7 @@
                                 {calc.noRemunerativoBase > 0 && <tr><td>{liq.noRemunerativosConcepto || "Asig. no remunerativa"}</td><td className="num"></td><td className="num">$ {fmt(calc.noRemunerativoBase)}</td><td className="num"></td></tr>}
                                 {calc.antigNoRemunMonto > 0 && <tr><td>Antigüedad s/no remunerativo</td><td className="num"></td><td className="num">$ {fmt(calc.antigNoRemunMonto)}</td><td className="num"></td></tr>}
                                 {calc.presentismoNoRemunMonto > 0 && <tr><td>Presentismo s/no remunerativo</td><td className="num"></td><td className="num">$ {fmt(calc.presentismoNoRemunMonto)}</td><td className="num"></td></tr>}
+                                {calc.sumaFija > 0 && <tr><td>{calc.sumaFijaConcepto}</td><td className="num"></td><td className="num">$ {fmt(calc.sumaFija)}</td><td className="num"></td></tr>}
                                 <tr><td>Jubilación 11%</td><td className="num"></td><td className="num"></td><td className="num">$ {fmt(calc.jubilacion)}</td></tr>
                                 <tr><td>Ley 19.032 3%</td><td className="num"></td><td className="num"></td><td className="num">$ {fmt(calc.ley19032)}</td></tr>
                                 <tr><td>Obra Social Aporte Unificado</td><td className="num"></td><td className="num"></td><td className="num">$ {fmt(calc.obraSocial)}</td></tr>
@@ -3515,7 +3579,7 @@
                                 <tr className="totales-row">
                                     <td>Totales</td>
                                     <td className="num">$ {fmt(calc.totalRemunerativo)}</td>
-                                    <td className="num">$ {fmt(calc.noRemunerativo)}</td>
+                                    <td className="num">$ {fmt(calc.noRemunerativoTotal)}</td>
                                     <td className="num">$ {fmt(calc.totalDeducciones)}</td>
                                 </tr>
                             </tfoot>
@@ -3755,6 +3819,20 @@
                 mostrarToast(`PDF con ${empleadosConLiq.length} recibo(s) generado ✓`);
             }
 
+            function onGenerarInformativoPDF() {
+                if (empleados.length === 0) {
+                    mostrarToast("Todavía no cargaste ningún empleado.");
+                    return;
+                }
+                if (!validarHorasParcial(empleados)) return;
+                const empleadosConLiq = empleados.map(e => ({
+                    emp: e,
+                    liq: resolverLiq(liqPorEmpleado[e.id] || defaultLiq(), periodoGeneral)
+                }));
+                generarPDFInformativo(empresa, empleadosConLiq, escalaGeneral);
+                mostrarToast(`PDF informativo con ${empleadosConLiq.length} recibo(s) generado ✓`);
+            }
+
             function onGenerarTodosAguinaldoPDF() {
                 if (empleados.length === 0) {
                     mostrarToast("Todavía no cargaste ningún empleado.");
@@ -3905,6 +3983,7 @@
                         {" "}— Cada cambio se guarda solo en este navegador.
                         <div style={{ marginTop: 8, display: "flex", gap: 10, justifyContent: "center", flexWrap: "wrap" }}>
                             <button className="btn btn-primary btn-sm" onClick={onGenerarTodosPDF}>⬇ Descargar todos los recibos (PDF)</button>
+                            <button className="btn btn-ghost btn-sm" onClick={onGenerarInformativoPDF}>📄 Recibos Informativos</button>
                             <button className="btn btn-primary btn-sm" onClick={onGenerarTodosAguinaldoPDF}>🎁 Descargar todos los aguinaldos (PDF)</button>
                             <button className="btn btn-ghost btn-sm" onClick={onGenerarPlanillaNetosPDF}>📋 Planilla de netos (PDF)</button>
                             <button className="btn btn-ghost btn-sm" onClick={onGenerarCosteoServicioPDF}>🧾 Costeo del servicio (PDF)</button>
