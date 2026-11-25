@@ -792,6 +792,240 @@
             background: #C9C2AC;
             border-radius: 6px;
         }
+
+        /* ---------- Barra de navegación móvil (oculta en escritorio) ---------- */
+        .mobile-nav {
+            display: none;
+        }
+
+        .empresa-toggle {
+            display: none;
+        }
+
+        /* ===================== Celular y tablet chica ===================== */
+        @media (max-width: 820px) {
+            .topbar {
+                padding: 14px 16px;
+                flex-direction: column;
+                align-items: stretch;
+                gap: 10px;
+            }
+
+            .brand {
+                align-items: center;
+            }
+
+            .empresa-toggle {
+                display: inline-block;
+                margin-left: auto;
+                background: transparent;
+                border: 1px solid #4C5A7D;
+                color: #B9C4D6;
+                border-radius: 3px;
+                font-family: 'Inter', sans-serif;
+                font-size: 11.5px;
+                font-weight: 600;
+                padding: 5px 9px;
+                cursor: pointer;
+                white-space: nowrap;
+            }
+
+            .brand .tag {
+                white-space: nowrap;
+            }
+
+            .topbar-fields {
+                display: none;
+                grid-template-columns: 1fr 1fr;
+                gap: 10px 14px;
+            }
+
+            .topbar.abierta .topbar-fields {
+                display: grid;
+            }
+
+            .topbar input[type=text] {
+                width: 100%;
+                font-size: 16px;
+            }
+
+            .layout {
+                flex-direction: column;
+            }
+
+            .mobile-nav {
+                display: flex;
+                align-items: center;
+                gap: 10px;
+                position: sticky;
+                top: 0;
+                z-index: 20;
+                background: #EFEBDF;
+                border-bottom: 1px solid var(--line-strong);
+                padding: 10px 16px;
+            }
+
+            .mobile-nav .btn {
+                flex: 0 0 auto;
+            }
+
+            .mobile-nav .actual {
+                font-size: 13px;
+                font-weight: 600;
+                color: var(--navy);
+                overflow: hidden;
+                text-overflow: ellipsis;
+                white-space: nowrap;
+            }
+
+            .sidebar {
+                display: none;
+                width: 100%;
+                border-right: none;
+                border-bottom: 1px solid var(--line-strong);
+                padding: 14px 16px;
+                max-height: none;
+            }
+
+            .sidebar.open {
+                display: block;
+            }
+
+            .emp-item {
+                padding: 12px;
+            }
+
+            .emp-item .del {
+                opacity: 0.6;
+                font-size: 18px;
+                padding: 4px 10px;
+            }
+
+            .main {
+                padding: 18px 16px 24px;
+            }
+
+            .topline {
+                flex-wrap: wrap;
+                gap: 8px;
+            }
+
+            .topline h1 {
+                font-size: 19px;
+            }
+
+            .tabs {
+                overflow-x: auto;
+                scrollbar-width: none;
+            }
+
+            .tab {
+                white-space: nowrap;
+                padding: 10px 12px;
+            }
+
+            .card {
+                padding: 16px;
+            }
+
+            .grid {
+                grid-template-columns: repeat(auto-fill, minmax(140px, 1fr));
+                gap: 12px;
+            }
+
+            .field input,
+            .field select {
+                font-size: 16px;
+                padding: 10px;
+            }
+
+            .actions-row {
+                flex-direction: column;
+            }
+
+            .actions-row .btn {
+                width: 100%;
+                padding: 12px 16px;
+            }
+
+            .calc-table {
+                font-size: 12.5px;
+            }
+
+            .recibo-wrap {
+                padding: 8px;
+            }
+
+            .recibo {
+                font-size: 10px;
+            }
+
+            .recibo-inner {
+                padding: 14px 12px;
+                overflow-x: auto;
+            }
+
+            .recibo-head {
+                flex-direction: column;
+                gap: 8px;
+            }
+
+            .recibo-head .titulo {
+                text-align: left;
+            }
+
+            .recibo .copy-tag {
+                position: static;
+                display: inline-block;
+                margin: 10px 12px 0;
+            }
+
+            .recibo-meta {
+                grid-template-columns: 1fr 1fr;
+            }
+
+            .recibo table td,
+            .recibo table th {
+                white-space: nowrap;
+            }
+
+            .footer-note > div {
+                flex-direction: column;
+            }
+
+            .footer-note .btn {
+                width: 100%;
+                padding: 12px 16px;
+            }
+
+            .toast {
+                left: 16px;
+                right: 16px;
+                transform: none;
+                text-align: center;
+            }
+        }
+
+        @media (max-width: 420px) {
+            .topbar-fields {
+                grid-template-columns: 1fr;
+            }
+
+            .grid {
+                grid-template-columns: 1fr;
+            }
+
+            .recibo-meta {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        /* En pantallas táctiles el botón de borrar se ve siempre (no hay hover) */
+        @media (hover: none) {
+            .emp-item .del {
+                opacity: 0.6;
+            }
+        }
     </style>
 </head>
 
@@ -1529,6 +1763,63 @@
             }
         }
 
+        /* ===================== Guardado en la nube (Cloudflare) ===================== */
+        // La URL del Worker y la clave se guardan en cada dispositivo (una sola
+        // vez). Los datos viven en Cloudflare; el localStorage queda como copia
+        // de respaldo por si no hay conexión.
+        const NUBE_CONFIG_KEY = "recibosComercio.nube.v1";
+        const META_KEY = "recibosComercio.meta.v1";
+        const ESPERA_SUBIDA_MS = 2500;      // espera tras el último cambio antes de subir
+        const REINTENTO_MS = 30000;         // reintento si no hay conexión
+
+        function leerJSONLocal(clave, def) {
+            try { const v = localStorage.getItem(clave); return v ? JSON.parse(v) : def; } catch (e) { return def; }
+        }
+        function escribirJSONLocal(clave, v) {
+            try { localStorage.setItem(clave, JSON.stringify(v)); } catch (e) { /* sin almacenamiento */ }
+        }
+        // Dirección del Worker de Cloudflare: ya viene cargada, así cada
+        // dispositivo se conecta solo, sin configurar nada.
+        const NUBE_URL_PREDETERMINADA = "https://sueldos.fedetrade.workers.dev";
+        // "vinculado": este dispositivo ya está sincronizado con la nube y puede
+        // subir cambios. Un dispositivo nuevo primero baja los datos de la nube
+        // (nunca pisa la nube con sus datos viejos sin que lo pidas).
+        const leerNubeConfig = () => ({ url: NUBE_URL_PREDETERMINADA, clave: "", vinculado: false, ...leerJSONLocal(NUBE_CONFIG_KEY, {}) });
+        const guardarNubeConfig = (cfg) => escribirJSONLocal(NUBE_CONFIG_KEY, cfg);
+        const leerMeta = () => leerJSONLocal(META_KEY, { updatedAt: 0, pendiente: false });
+        const guardarMeta = (m) => escribirJSONLocal(META_KEY, m);
+        const nubeActiva = (cfg) => !!(cfg && cfg.url);
+        const cabeceraClave = (cfg) => cfg.clave ? { Authorization: "Bearer " + cfg.clave } : {};
+        const urlDatos = (cfg) => cfg.url.trim().replace(/\/+$/, "") + "/datos";
+
+        async function nubeLeer(cfg) {
+            try {
+                const resp = await fetch(urlDatos(cfg), {
+                    headers: cabeceraClave(cfg), cache: "no-store"
+                });
+                const data = await resp.json().catch(() => null);
+                return { ok: resp.ok, status: resp.status, data };
+            } catch (err) {
+                return { ok: false, status: 0, data: null };
+            }
+        }
+
+        async function nubeGuardar(cfg, cuerpo, keepalive) {
+            try {
+                const resp = await fetch(urlDatos(cfg), {
+                    method: "PUT",
+                    headers: { ...cabeceraClave(cfg), "Content-Type": "application/json" },
+                    body: JSON.stringify(cuerpo),
+                    keepalive: !!keepalive,
+                });
+                return { ok: resp.ok, status: resp.status };
+            } catch (err) {
+                return { ok: false, status: 0 };
+            }
+        }
+
+        const horaAhora = () => new Date().toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit' });
+
         /* ===================== Utilidades ===================== */
 
         const fmt = (n) => {
@@ -1791,7 +2082,56 @@
             const plusVacacional = Math.max(0, basePlusVacacional) * factorPlusVac;
             const valorDiaVacaciones = basePlusVacacional / 25;
 
-            const totalRemunerativo = brutoParaPresentismo + presentismoMonto + plusVacacional;
+            // Diferencia paritaria (retroactivo): mes liquidado con el básico
+            // viejo y pagado en este recibo. Por categoría se carga en la Escala
+            // general el básico liquidado y el que correspondía; la diferencia
+            // se ajusta por jornada y genera antigüedad y presentismo como el
+            // básico. Es remunerativa (paga todos los aportes). Lo mismo para la
+            // asignación no remunerativa, cuya diferencia sigue siendo no
+            // remunerativa. No entra en plus vacacional ni aguinaldo.
+            const dp = escalaGeneral.difParitaria || {};
+            // Tilde general en la Escala: si no está activo, toda la diferencia
+            // queda en cero y no se muestra (los montos cargados se conservan).
+            const difParActiva = dp.activa !== undefined ? !!dp.activa : Object.values(dp.basicosLiq || {}).some(v => parseFloat(v) > 0);
+            const aplicaDifPar = difParActiva && liq.aplicarDifParitaria !== false;
+            const difParMes = dp.mes || "";
+            // Si "básico que correspondía" queda vacío, se toma el básico actual
+            // de la escala. Sin "básico liquidado" no hay diferencia.
+            const dpBasLiq = parseFloat((dp.basicosLiq || {})[emp.categoria]) || 0;
+            const dpBasCorr = parseFloat((dp.basicosCorr || {})[emp.categoria]) || parseFloat((escalaGeneral.basicos || {})[emp.categoria]) || 0;
+            const difBasicoCat = dpBasLiq > 0 ? dpBasCorr - dpBasLiq : 0;
+            const difParBasico = aplicaDifPar ? difBasicoCat * fraccion : 0;
+            // Novedades de ese mes (cargadas en la liquidación del empleado):
+            // horas extra, inasistencias y días de vacaciones. La diferencia de
+            // cada concepto se calcula igual que en el recibo normal, pero
+            // sobre la diferencia de básico.
+            const dpHE50 = parseFloat(liq.difParHE50) || 0;
+            const dpHE100 = parseFloat(liq.difParHE100) || 0;
+            const dpInasist = parseFloat(liq.difParInasist) || 0;
+            const dpDiasVac = parseFloat(liq.difParDiasVac) || 0;
+            const difParHE = dpHE50 * (difParBasico / 200) * 1.5 + dpHE100 * (difParBasico / 200) * 2;
+            const difParAntigBasico = difParBasico * antigPct / 100;
+            const difParAntig = difParAntigBasico + difParHE * antigPct / 100;
+            const difParInasist = dpInasist * ((difParBasico + difParAntigBasico) / horasBaseInasistencia);
+            const difParBrutoPres = difParBasico + difParAntig + difParHE - difParInasist;
+            const difParPresFlag = liq.difParPresentismo !== undefined ? liq.difParPresentismo : !!liq.presentismo;
+            const difParPres = difParPresFlag ? difParBrutoPres * 0.0833 : 0;
+
+            const dpNoRemLiq = parseFloat(dp.noRemLiq) || 0;
+            const dpNoRemCorr = parseFloat(dp.noRemCorr) || parseFloat(escalaGeneral.noRemunerativo) || 0;
+            const difNoRemCat = difParActiva && dpNoRemLiq > 0 ? dpNoRemCorr - dpNoRemLiq : 0;
+            const difParNoRemBase = aplicaDifPar ? difNoRemCat * fraccion : 0;
+            const difParNoRemAntig = difParNoRemBase * antigPct / 100;
+            const difParNoRemPres = difParPresFlag ? (difParNoRemBase + difParNoRemAntig) * 0.0833 : 0;
+            const difParitariaNoRem = difParNoRemBase + difParNoRemAntig + difParNoRemPres;
+
+            // Plus vacacional de ese mes: misma base que el plus normal (todo lo
+            // que genera aportes), aplicada a las diferencias. Va dentro del
+            // concepto remunerativo, igual que el plus vacacional.
+            const difParPlusVac = Math.max(0, difParBrutoPres + difParPres + difParitariaNoRem) * dpDiasVac * (1 / 25 - 1 / 30);
+            const difParitariaRem = difParBrutoPres + difParPres + difParPlusVac;
+
+            const totalRemunerativo = brutoParaPresentismo + presentismoMonto + plusVacacional + difParitariaRem;
 
             // El concepto no remunerativo también genera antigüedad y presentismo
             // (mismos porcentajes que sobre el básico), pero lo generado sigue
@@ -1804,7 +2144,7 @@
             const presentismoNoRemunMonto = liq.presentismo ? brutoNoRemunParaPresentismo * 0.0833 : 0;
 
             const plusVacacionalNoRem = 0; // el plus vacacional va todo en un solo concepto remunerativo
-            const noRemunerativo = brutoNoRemunParaPresentismo + presentismoNoRemunMonto;
+            const noRemunerativo = brutoNoRemunParaPresentismo + presentismoNoRemunMonto + difParitariaNoRem;
 
             // Base imponible para la obra social
 
@@ -1886,6 +2226,7 @@
                 presentismoMonto, totalRemunerativo,
                 noRemunerativoBase, antigNoRemunMonto, presentismoNoRemunMonto, noRemunerativo,
                 sumaFija, sumaFijaConcepto, noRemunerativoTotal,
+                difParActiva, difParMes, difParBasico, difParAntig, difParHE, difParInasist, difParPres, difParPlusVac, difParitariaRem, difParNoRemBase, difParitariaNoRem,
                 jubilacion, ley19032, obraSocial, sindical, otrasDeducciones, totalDeducciones,
                 totalBruto, neto, contribPatronalesPct, contribucionesPatronales,
                 contribSS, contribOS, contribART, contribSVCVO, costoTotalLaboral,
@@ -1908,8 +2249,8 @@
             // ligado a los días de vacaciones tomados en ese período.
             const remunerativoBase = (incluirHorasExtra
                 ? calc.totalRemunerativo
-                : calc.totalRemunerativo - calc.he50 - calc.he100 - (calc.antigHEMonto || 0)) - (calc.plusVacacional || 0);
-            const noRemunerativoBase = calc.noRemunerativo - (calc.plusVacacionalNoRem || 0);
+                : calc.totalRemunerativo - calc.he50 - calc.he100 - (calc.antigHEMonto || 0)) - (calc.plusVacacional || 0) - (calc.difParitariaRem || 0);
+            const noRemunerativoBase = calc.noRemunerativo - (calc.plusVacacionalNoRem || 0) - (calc.difParitariaNoRem || 0);
             const baseTotal = remunerativoBase + noRemunerativoBase;
 
             const sacRemun = remunerativoBase * 0.5;
@@ -1974,6 +2315,9 @@
                 no_remunerativo_total: n(calc.noRemunerativo),
                 suma_fija_concepto: calc.sumaFija > 0 ? calc.sumaFijaConcepto : "",
                 suma_fija_monto: n(calc.sumaFija),
+                dif_paritaria_mes: (calc.difParitariaRem || calc.difParitariaNoRem) ? calc.difParMes : "",
+                dif_paritaria_remunerativo: n(calc.difParitariaRem),
+                dif_paritaria_no_remunerativo: n(calc.difParitariaNoRem),
                 jubilacion: n(calc.jubilacion),
                 ley_19032: n(calc.ley19032),
                 obra_social: n(calc.obraSocial),
@@ -2258,9 +2602,11 @@
                 ["Inasistencias", -(calc.inasistenciasMonto || 0), 0, 0, calc.horasInasistencia > 0 ? `${calc.horasInasistencia}` : ""],
                 ["Plus vacacional", calc.plusVacacional, 0, 0, calc.diasVacaciones > 0 ? `${calc.diasVacaciones}` : ""],
                 [liq.otrosRemunerativosConcepto || "Otras remuneraciones", calc.otrosRemun, 0, 0, ""],
+                [`Dif. paritaria ${calc.difParMes}`.trim(), calc.difParitariaRem, 0, 0, ""],
                 [liq.noRemunerativosConcepto || "Asignación no remunerativa", 0, calc.noRemunerativoBase, 0, ""],
                 ["Antigüedad s/no remunerativo", 0, calc.antigNoRemunMonto, 0, ""],
                 ["Presentismo s/no remunerativo", 0, calc.presentismoNoRemunMonto, 0, calc.presentismoNoRemunMonto > 0 ? "8,33%" : ""],
+                [`Dif. paritaria no remunerativa ${calc.difParMes}`.trim(), 0, calc.difParitariaNoRem, 0, ""],
                 [calc.sumaFijaConcepto, 0, calc.sumaFija, 0, ""],
                 ["Jubilación (Ley 24.241)", 0, 0, calc.jubilacion, "11%"],
                 ["Ley 19.032 (INSSJP/PAMI)", 0, 0, calc.ley19032, "3%"],
@@ -2740,7 +3086,7 @@
                 const baseSindicalNoRemun = valorHoraNoRemunCompleta * HORAS_BASE_SINDICAL;
                 const sindical = emp.afiliadoSindicato ? (baseSindicalRemun + baseSindicalNoRemun) * 0.045 : 0;
 
-                const aguinaldoProp = (calc.totalRemunerativo + calc.noRemunerativo) / 12;
+                const aguinaldoProp = (calc.totalRemunerativo - (calc.difParitariaRem || 0) + calc.noRemunerativo - (calc.difParitariaNoRem || 0)) / 12;
                 const subtotal = calc.neto + aportesYContrib + art + sindical + aguinaldoProp;
 
                 return { nombre: emp.nombre || "(sin nombre)", neto: calc.neto, aportesYContrib, art, sindical, aguinaldoProp, subtotal };
@@ -2870,11 +3216,16 @@
         /* ===================== Componentes ===================== */
 
         function TopBar({ empresa, setEmpresa }) {
+            // En celular los datos de la empresa se pliegan para ganar pantalla.
+            const [abierta, setAbierta] = useState(false);
             return (
-                <div className="topbar">
+                <div className={"topbar" + (abierta ? " abierta" : "")}>
                     <div className="brand">
                         <span className="mark">Recibos&nbsp;Comercio</span>
                         <span className="tag">CCT 130/75</span>
+                        <button type="button" className="empresa-toggle" onClick={() => setAbierta(!abierta)}>
+                            {abierta ? "Ocultar empresa ▴" : "Datos empresa ▾"}
+                        </button>
                     </div>
                     <div className="topbar-fields">
                         <div>
@@ -2902,14 +3253,17 @@
             );
         }
 
-        function Sidebar({ empleados, selectedId, onSelect, onNuevo, onDelete, vista, onVerEscala, onVerWebhook }) {
+        function Sidebar({ empleados, selectedId, onSelect, onNuevo, onDelete, vista, onVerEscala, onVerWebhook, onVerNube, abierto }) {
             return (
-                <div className="sidebar">
+                <div className={"sidebar" + (abierto ? " open" : "")}>
                     <button className={"sidebar-scale-btn" + (vista === "escala" ? " active" : "")} onClick={onVerEscala}>
                         ⚙ Escala salarial y período general
                     </button>
                     <button className={"sidebar-scale-btn" + (vista === "webhook" ? " active" : "")} onClick={onVerWebhook}>
                         🔗 Exportar por Webhook (Make)
+                    </button>
+                    <button className={"sidebar-scale-btn" + (vista === "nube" ? " active" : "")} onClick={onVerNube}>
+                        ☁ Guardado en la nube
                     </button>
                     <h2>Empleados ({empleados.length})</h2>
                     <button className="btn btn-primary btn-block" onClick={onNuevo} style={{ marginBottom: 14 }}>
@@ -2934,6 +3288,12 @@
 
         function EscalaGeneralView({ escalaGeneral, updateEscalaGeneral, periodoGeneral, updatePeriodoGeneral }) {
             const [catSeleccionada, setCatSeleccionada] = useState(CATEGORIAS[0]);
+            const [catDifPar, setCatDifPar] = useState(CATEGORIAS[0]);
+            const dp = escalaGeneral.difParitaria || {};
+            const dpLiq = dp.basicosLiq || {}, dpCorr = dp.basicosCorr || {};
+            const updateDp = (patch) => updateEscalaGeneral({ difParitaria: { ...dp, ...patch } });
+            const dpActiva = dp.activa !== undefined ? !!dp.activa : Object.values(dpLiq).some(v => parseFloat(v) > 0);
+            const difCat = (c) => (parseFloat(dpLiq[c]) || 0) > 0 ? ((parseFloat(dpCorr[c]) || parseFloat(basicos[c]) || 0) - parseFloat(dpLiq[c])) : 0;
             const basicos = escalaGeneral.basicos || {};
             const basicoActual = basicos[catSeleccionada] || "";
             const cantidadCargadas = CATEGORIAS.filter(c => basicos[c]).length;
@@ -3036,6 +3396,78 @@
                         </div>
                     </div>
                     <div className="card">
+                        <h3>Diferencia paritaria (retroactivo)</h3>
+                        <div className="field checkbox" style={{ marginBottom: dpActiva ? 14 : 0 }}>
+                            <input type="checkbox" id="difParActiva" checked={dpActiva}
+                                onChange={e => updateDp({ activa: e.target.checked })} />
+                            <label htmlFor="difParActiva">Este mes corresponde pagar diferencia paritaria</label>
+                        </div>
+                        {dpActiva && (<React.Fragment>
+                        <div className="grid">
+                            <div className="field">
+                                <label>Mes de la diferencia</label>
+                                <input type="text" placeholder="Ej. Octubre 2026" value={dp.mes || ""}
+                                    onChange={e => updateDp({ mes: e.target.value })} />
+                            </div>
+                            <div className="field">
+                                <label>Categoría</label>
+                                <select value={catDifPar} onChange={e => setCatDifPar(e.target.value)}>
+                                    {CATEGORIAS.map(c => <option key={c} value={c}>{c}</option>)}
+                                </select>
+                            </div>
+                            <div className="field">
+                                <label>Básico liquidado ($)</label>
+                                <input type="text" placeholder="Lo que se pagó" value={dpLiq[catDifPar] || ""}
+                                    onChange={e => updateDp({ basicosLiq: { ...dpLiq, [catDifPar]: e.target.value } })} />
+                            </div>
+                            <div className="field">
+                                <label>Básico que correspondía ($)</label>
+                                <input type="text" placeholder={basicos[catDifPar] ? `Vacío = actual $ ${fmt(parseFloat(basicos[catDifPar]) || 0)}` : "Con paritaria"} value={dpCorr[catDifPar] || ""}
+                                    onChange={e => updateDp({ basicosCorr: { ...dpCorr, [catDifPar]: e.target.value } })} />
+                            </div>
+                        </div>
+                        <div className="escala-resumen">
+                            {CATEGORIAS.map(c => {
+                                const d = difCat(c);
+                                return (
+                                    <button type="button" key={c}
+                                        className={"escala-chip" + (c === catDifPar ? " active" : "") + (d ? " filled" : "")}
+                                        onClick={() => setCatDifPar(c)}>
+                                        <span className="chip-cat">{c}</span>
+                                        <span className="chip-val">{d ? "Dif. $ " + fmt(d) : "Sin diferencia"}</span>
+                                    </button>
+                                );
+                            })}
+                        </div>
+                        <div className="grid" style={{ marginTop: 6 }}>
+                            <div className="field">
+                                <label>No remunerativo liquidado ($)</label>
+                                <input type="text" placeholder="Opcional" value={dp.noRemLiq || ""}
+                                    onChange={e => updateDp({ noRemLiq: e.target.value })} />
+                            </div>
+                            <div className="field">
+                                <label>No remunerativo que correspondía ($)</label>
+                                <input type="text" placeholder={escalaGeneral.noRemunerativo ? `Vacío = actual $ ${fmt(parseFloat(escalaGeneral.noRemunerativo) || 0)}` : "Opcional"} value={dp.noRemCorr || ""}
+                                    onChange={e => updateDp({ noRemCorr: e.target.value })} />
+                            </div>
+                        </div>
+                        <div className="hint">
+                            Para pagar en este recibo la diferencia de un mes que se liquidó sin la paritaria. Cargá,
+                            por categoría y a jornada completa, el básico que se liquidó y el que correspondía. La
+                            diferencia se ajusta por la jornada de cada empleado y suma su antigüedad y presentismo,
+                            igual que el básico, en un solo concepto remunerativo con todos los aportes. Si en ese mes el empleado tuvo
+                            horas extra, inasistencias o vacaciones, cargalas en su liquidación (cuadro "Diferencia de
+                            mes anterior") y se suma también la diferencia de esos conceptos. Si también
+                            cambió la asignación no remunerativa, cargá los dos montos y su diferencia va como no
+                            remunerativa. No entra en el plus vacacional ni en el aguinaldo. <strong>Al liquidar el mes
+                            siguiente, destildá "Este mes corresponde pagar diferencia paritaria"</strong> para que no se
+                            vuelva a pagar (los montos quedan guardados). En la
+                            liquidación de cada empleado podés destildar "Aplicar diferencia paritaria" (por ejemplo,
+                            si ingresó después de ese mes).
+                        </div>
+                        </React.Fragment>)}
+                    </div>
+                    <div className="card">
                         <h3>Suma Fija (no remunerativa, sin aportes)</h3>
                         <div className="grid">
                             <div className="field">
@@ -3104,6 +3536,47 @@
             );
         }
 
+        function NubeView({ nubeCfg, onGuardar, onDesconectar, onSincronizar, estadoNube }) {
+            const [url, setUrl] = useState(nubeCfg.url || "");
+            return (
+                <React.Fragment>
+                    <div className="topline">
+                        <div>
+                            <h1>Guardado en la nube</h1>
+                            <div className="sub">Los datos quedan en Cloudflare y se ven igual desde cualquier dispositivo</div>
+                        </div>
+                        <span className="badge">Cloudflare</span>
+                    </div>
+                    <div className="card">
+                        <h3>Conexión de este dispositivo</h3>
+                        <div className="grid">
+                            <div className="field" style={{ gridColumn: "1 / -1" }}>
+                                <label>Dirección del Worker</label>
+                                <input type="text" placeholder="https://recibos-comercio.tuusuario.workers.dev"
+                                    value={url} onChange={e => setUrl(e.target.value)} />
+                            </div>
+                        </div>
+                        <div className="actions-row">
+                            <button className="btn btn-primary" disabled={!url.trim()}
+                                onClick={() => onGuardar({ url: url.trim(), clave: "" })}>{estadoNube.tipo === "vacia" ? "Subir los datos de este dispositivo" : "Guardar y conectar"}</button>
+                            {nubeActiva(nubeCfg) && <button className="btn btn-ghost" onClick={onSincronizar}>Sincronizar ahora</button>}
+                            {nubeActiva(nubeCfg) && <button className="btn btn-ghost" style={{ color: "var(--red)" }}
+                                onClick={() => { setUrl(""); onDesconectar(); }}>Desconectar este dispositivo</button>}
+                        </div>
+                        <div className="hint" style={{ marginTop: 12 }}>
+                            Estado: <strong>{estadoNube.texto}</strong>
+                        </div>
+                        <div className="hint">
+                            La dirección ya viene cargada: cada computadora o celular se conecta solo al abrir la
+                            app y baja los datos de la nube. La primera vez, si la nube está vacía, entrá acá desde el
+                            dispositivo que tiene los datos al día y tocá "Subir los datos de este dispositivo". Después,
+                            cada cambio se sube solo unos segundos después de que dejás de escribir.
+                        </div>
+                    </div>
+                </React.Fragment>
+            );
+        }
+
         function WebhookView({ webhookUrl, setWebhookUrl, onEnviarTodos, onProbar, enviando, log, cantidadEmpleados }) {
             return (
                 <React.Fragment>
@@ -3146,7 +3619,8 @@
                             horas_inasistencia, inasistencias_monto, plus_vacacional_dias, plus_vacacional_monto,
                             otras_remuneraciones_concepto, otras_remuneraciones_monto, no_remunerativo_concepto,
                             no_remunerativo_base, no_remunerativo_antiguedad, no_remunerativo_presentismo,
-                            no_remunerativo_total, suma_fija_concepto, suma_fija_monto, jubilacion, ley_19032, obra_social, cuota_sindical,
+                            no_remunerativo_total, suma_fija_concepto, suma_fija_monto, dif_paritaria_mes,
+                            dif_paritaria_remunerativo, dif_paritaria_no_remunerativo, jubilacion, ley_19032, obra_social, cuota_sindical,
                             otras_deducciones_concepto, otras_deducciones_monto, total_remunerativo,
                             total_deducciones, total_bruto, neto_a_cobrar, contribuciones_patronales_pct,
                             contribuciones_patronales_monto.
@@ -3354,6 +3828,73 @@
                         </div>
                     </div>
 
+                    {calc.difParActiva && (
+                    <div className="card">
+                        <h3>Diferencia de mes anterior (paritaria)</h3>
+                        <div className="field checkbox" style={{ marginBottom: 12 }}>
+                            <input type="checkbox" id="difParitaria" checked={liq.aplicarDifParitaria !== false}
+                                onChange={e => updateLiq({ aplicarDifParitaria: e.target.checked })} />
+                            <label htmlFor="difParitaria">
+                                Pagar en este recibo la diferencia{calc.difParMes ? ` de ${calc.difParMes}` : ""} cargada en la Escala general
+                            </label>
+                        </div>
+                        {(calc.difParBasico === 0 && calc.difParitariaNoRem === 0 && liq.aplicarDifParitaria !== false) && (
+                            <div className="hint" style={{ marginBottom: 10 }}>
+                                Todavía no hay diferencia de básico para la categoría {emp.categoria || "del empleado"}. Cargá el
+                                básico liquidado y el que correspondía en "⚙ Escala salarial y período general" → Diferencia
+                                paritaria.
+                            </div>
+                        )}
+                        <div className="hint" style={{ marginBottom: 8 }}>
+                            Cargá las novedades que tuvo el empleado en {calc.difParMes || "el mes de la diferencia"} (lo que se
+                            liquidó en ese recibo). Se calcula el diferencial de cada concepto con la diferencia de básico.
+                        </div>
+                        <div className="grid">
+                            <div className="field">
+                                <label>Horas extra al 50%</label>
+                                <input type="text" disabled={liq.aplicarDifParitaria === false} value={liq.difParHE50 || ""} onChange={e => updateLiq({ difParHE50: e.target.value })} />
+                            </div>
+                            <div className="field">
+                                <label>Horas extra al 100%</label>
+                                <input type="text" disabled={liq.aplicarDifParitaria === false} value={liq.difParHE100 || ""} onChange={e => updateLiq({ difParHE100: e.target.value })} />
+                            </div>
+                            <div className="field">
+                                <label>Inasistencias (hs)</label>
+                                <input type="text" disabled={liq.aplicarDifParitaria === false} value={liq.difParInasist || ""} onChange={e => updateLiq({ difParInasist: e.target.value })} />
+                            </div>
+                            <div className="field">
+                                <label>Plus vacacional (días)</label>
+                                <input type="text" disabled={liq.aplicarDifParitaria === false} value={liq.difParDiasVac || ""} onChange={e => updateLiq({ difParDiasVac: e.target.value })} />
+                            </div>
+                        </div>
+                        <div className="field checkbox">
+                            <input type="checkbox" id="difParPresentismo" disabled={liq.aplicarDifParitaria === false}
+                                checked={liq.difParPresentismo !== undefined ? liq.difParPresentismo : !!liq.presentismo}
+                                onChange={e => updateLiq({ difParPresentismo: e.target.checked })} />
+                            <label htmlFor="difParPresentismo">En ese mes correspondía presentismo</label>
+                        </div>
+                        {liq.aplicarDifParitaria !== false && (calc.difParitariaRem !== 0 || calc.difParitariaNoRem !== 0) && (
+                            <table className="calc-table" style={{ marginTop: 12 }}>
+                                <tbody>
+                                    <tr><td className="label">Dif. básico</td><td className="amount">$ {fmt(calc.difParBasico)}</td></tr>
+                                    <tr><td className="label">Dif. horas extra</td><td className="amount">$ {fmt(calc.difParHE)}</td></tr>
+                                    <tr><td className="label">Dif. antigüedad</td><td className="amount">$ {fmt(calc.difParAntig)}</td></tr>
+                                    <tr><td className="label">Dif. inasistencias</td><td className="amount">$ -{fmt(calc.difParInasist)}</td></tr>
+                                    <tr><td className="label">Dif. presentismo</td><td className="amount">$ {fmt(calc.difParPres)}</td></tr>
+                                    <tr><td className="label">Dif. plus vacacional</td><td className="amount">$ {fmt(calc.difParPlusVac)}</td></tr>
+                                    <tr className="total"><td>Dif. paritaria {calc.difParMes} (remunerativo)</td><td className="amount">$ {fmt(calc.difParitariaRem)}</td></tr>
+                                    {calc.difParitariaNoRem !== 0 && <tr><td className="label">Dif. paritaria no remunerativa</td><td className="amount">$ {fmt(calc.difParitariaNoRem)}</td></tr>}
+                                </tbody>
+                            </table>
+                        )}
+                        <div className="hint">
+                            En el recibo sale como un solo concepto "Dif. paritaria {calc.difParMes || "(mes)"}". Borrá estas
+                            novedades al liquidar el mes siguiente.
+                        </div>
+                    </div>
+                    )}
+
+
                     <div className="card">
                         <h3>No remunerativo y otras deducciones</h3>
                         <div className="grid">
@@ -3402,9 +3943,11 @@
                                 <tr><td className="label">Inasistencias ({calc.horasInasistencia || 0} hs)</td><td className="amount">$ -{fmt(calc.inasistenciasMonto)}</td></tr>
                                 <tr><td className="label">Plus vacacional ({calc.diasVacaciones} día/s)</td><td className="amount">$ {fmt(calc.plusVacacional)}</td></tr>
                                 <tr><td className="label">Otras remuneraciones</td><td className="amount">$ {fmt(calc.otrosRemun)}</td></tr>
+                                {calc.difParActiva && <tr><td className="label">Dif. paritaria{calc.difParMes ? " " + calc.difParMes : ""}</td><td className="amount">$ {fmt(calc.difParitariaRem)}</td></tr>}
                                 <tr><td className="label">Asignación no remunerativa</td><td className="amount">$ {fmt(calc.noRemunerativoBase)}</td></tr>
                                 <tr><td className="label">Antigüedad s/no remunerativo</td><td className="amount">$ {fmt(calc.antigNoRemunMonto)}</td></tr>
                                 <tr><td className="label">Presentismo s/no remunerativo</td><td className="amount">$ {fmt(calc.presentismoNoRemunMonto)}</td></tr>
+                                {calc.difParitariaNoRem !== 0 && <tr><td className="label">Dif. paritaria no remunerativa {calc.difParMes}</td><td className="amount">$ {fmt(calc.difParitariaNoRem)}</td></tr>}
                                 <tr><td className="label">{calc.sumaFijaConcepto} (sin aportes)</td><td className="amount">$ {fmt(calc.sumaFija)}</td></tr>
                                 <tr className="total"><td>Total bruto</td><td className="amount">$ {fmt(calc.totalBruto)}</td></tr>
 
@@ -3572,9 +4115,11 @@
                                 {calc.inasistenciasMonto > 0 && <tr><td>Inasistencias ({calc.horasInasistencia} hs)</td><td className="num">$ -{fmt(calc.inasistenciasMonto)}</td><td className="num"></td><td className="num"></td></tr>}
                                 {calc.plusVacacional > 0 && <tr><td>Plus vacacional ({calc.diasVacaciones} día/s)</td><td className="num">$ {fmt(calc.plusVacacional)}</td><td className="num"></td><td className="num"></td></tr>}
                                 {calc.otrosRemun > 0 && <tr><td>{liq.otrosRemunerativosConcepto || "Otras remuneraciones"}</td><td className="num">$ {fmt(calc.otrosRemun)}</td><td className="num"></td><td className="num"></td></tr>}
+                                {calc.difParitariaRem !== 0 && <tr><td>Dif. paritaria {calc.difParMes}</td><td className="num">$ {fmt(calc.difParitariaRem)}</td><td className="num"></td><td className="num"></td></tr>}
                                 {calc.noRemunerativoBase > 0 && <tr><td>{liq.noRemunerativosConcepto || "Asig. no remunerativa"}</td><td className="num"></td><td className="num">$ {fmt(calc.noRemunerativoBase)}</td><td className="num"></td></tr>}
                                 {calc.antigNoRemunMonto > 0 && <tr><td>Antigüedad s/no remunerativo</td><td className="num"></td><td className="num">$ {fmt(calc.antigNoRemunMonto)}</td><td className="num"></td></tr>}
                                 {calc.presentismoNoRemunMonto > 0 && <tr><td>Presentismo s/no remunerativo</td><td className="num"></td><td className="num">$ {fmt(calc.presentismoNoRemunMonto)}</td><td className="num"></td></tr>}
+                                {calc.difParitariaNoRem !== 0 && <tr><td>Dif. paritaria no remunerativa {calc.difParMes}</td><td className="num"></td><td className="num">$ {fmt(calc.difParitariaNoRem)}</td><td className="num"></td></tr>}
                                 {calc.sumaFija > 0 && <tr><td>{calc.sumaFijaConcepto}</td><td className="num"></td><td className="num">$ {fmt(calc.sumaFija)}</td><td className="num"></td></tr>}
                                 <tr><td>Jubilación 11%</td><td className="num"></td><td className="num"></td><td className="num">$ {fmt(calc.jubilacion)}</td></tr>
                                 <tr><td>Ley 19.032 3%</td><td className="num"></td><td className="num"></td><td className="num">$ {fmt(calc.ley19032)}</td></tr>
@@ -3663,19 +4208,156 @@
             const [webhookEnviando, setWebhookEnviando] = useState(false);
             const [webhookLog, setWebhookLog] = useState([]);
             const [toast, setToast] = useState(null);
+            const [menuMovil, setMenuMovil] = useState(false); // panel de empleados en celular
             const [estadoGuardado, setEstadoGuardado] = useState({ ok: true, hora: null });
             const fileInputRef = useRef(null);
 
-            // Autoguardado: cada vez que cambia cualquier dato (empresa,
-            // empleados, liquidaciones, escala, período o webhook) se guarda
-            // al instante en el navegador.
+            // ---------- Nube (Cloudflare) ----------
+            const [nubeCfg, setNubeCfg] = useState(leerNubeConfig);
+            const [estadoNube, setEstadoNube] = useState(() => nubeActiva(leerNubeConfig())
+                ? { tipo: "conectando", texto: "Conectando con la nube…" }
+                : { tipo: "off", texto: "Nube no configurada en este dispositivo" });
+            const nubeCfgRef = useRef(nubeCfg);
+            const datosRef = useRef(null);
+            const primeraVez = useRef(true);
+            const aplicandoRemoto = useRef(false);
+            const timerSubida = useRef(null);
+            const ultimaSync = useRef(0);
+
+            function aplicarDatos(d) {
+                if (d.empresa) setEmpresa(d.empresa);
+                setEmpleados(d.empleados || []);
+                setLiqPorEmpleado(d.liqPorEmpleado || {});
+                setEscalaGeneral({ ...defaultEscalaGeneral(), ...(d.escalaGeneral || {}) });
+                setPeriodoGeneral({ ...defaultPeriodoGeneral(), ...(d.periodoGeneral || {}) });
+                setWebhookUrl(d.webhookUrl || "");
+            }
+
+            async function subirAhora(keepalive) {
+                clearTimeout(timerSubida.current);
+                const cfg = nubeCfgRef.current;
+                if (!nubeActiva(cfg) || !datosRef.current) return;
+                if (!cfg.vinculado) return; // todavía no bajó los datos de la nube
+                const meta = leerMeta();
+                if (!keepalive) setEstadoNube({ tipo: "guardando", texto: "Guardando en la nube…" });
+                const r = await nubeGuardar(cfg, { updatedAt: meta.updatedAt || Date.now(), datos: datosRef.current }, keepalive);
+                if (r.ok) {
+                    const m = leerMeta();
+                    if (m.updatedAt === meta.updatedAt) guardarMeta({ ...m, pendiente: false });
+                    setEstadoNube({ tipo: "ok", texto: `Guardado en la nube · ${horaAhora()}` });
+                } else if (r.status === 401) {
+                    setEstadoNube({ tipo: "error", texto: "El Worker pide clave: borrá el secret CLAVE en Cloudflare" });
+                } else {
+                    setEstadoNube({ tipo: "offline", texto: "Sin conexión con la nube — guardado en este dispositivo, se reintenta solo" });
+                    timerSubida.current = setTimeout(() => subirAhora(), REINTENTO_MS);
+                }
+            }
+
+            function programarSubida() {
+                clearTimeout(timerSubida.current);
+                if (!nubeCfgRef.current.vinculado) return; // no sube hasta estar vinculado
+                setEstadoNube(e => e.tipo === "error" ? e : { tipo: "guardando", texto: "Cambios sin subir todavía…" });
+                timerSubida.current = setTimeout(() => subirAhora(), ESPERA_SUBIDA_MS);
+            }
+
+            // Trae lo último de la nube y decide quién gana: se queda la
+            // versión más reciente (la de la nube o la de este dispositivo).
+            async function sincronizarDesdeNube(avisar) {
+                const cfg = nubeCfgRef.current;
+                if (!nubeActiva(cfg)) return;
+                ultimaSync.current = Date.now();
+                const r = await nubeLeer(cfg);
+                if (r.status === 401) {
+                    setEstadoNube({ tipo: "error", texto: "El Worker pide clave: borrá el secret CLAVE en Cloudflare" });
+                    return;
+                }
+                if (!r.ok || !r.data) {
+                    setEstadoNube({ tipo: "offline", texto: "Sin conexión con la nube — guardado en este dispositivo, se reintenta solo" });
+                    return;
+                }
+                const remoto = r.data;
+                const meta = leerMeta();
+                const vinculado = !!cfg.vinculado;
+                if (!remoto.datos) {
+                    if (vinculado) {
+                        await subirAhora(); // nube vacía: se suben los datos de este dispositivo
+                        if (avisar) mostrarToast("Datos subidos a la nube ✓");
+                    } else {
+                        setEstadoNube({ tipo: "vacia", texto: "La nube está vacía — tocá acá y subí los datos desde el dispositivo que los tiene al día" });
+                    }
+                } else if (vinculado && meta.pendiente && (meta.updatedAt || 0) >= (remoto.updatedAt || 0)) {
+                    await subirAhora(); // este dispositivo tiene cambios más nuevos
+                } else if (!vinculado || (remoto.updatedAt || 0) > (meta.updatedAt || 0)) {
+                    if (!nubeCfgRef.current.vinculado) {
+                        const c = { ...nubeCfgRef.current, vinculado: true };
+                        guardarNubeConfig(c); nubeCfgRef.current = c; setNubeCfg(c);
+                    }
+                    aplicandoRemoto.current = true;
+                    aplicarDatos(remoto.datos);
+                    guardarMeta({ updatedAt: remoto.updatedAt, pendiente: false });
+                    setEstadoNube({ tipo: "ok", texto: `Actualizado desde la nube · ${horaAhora()}` });
+                    if (avisar) mostrarToast("Datos actualizados desde la nube ✓");
+                } else {
+                    setEstadoNube({ tipo: "ok", texto: `Guardado en la nube · ${horaAhora()}` });
+                    if (avisar) mostrarToast("Todo está al día ✓");
+                }
+            }
+
+            // Botón explícito: vincula este dispositivo (si la nube está vacía,
+            // sube sus datos; si tiene datos, queda la versión más reciente).
+            function guardarConfigNube(cfg) {
+                cfg = { ...cfg, vinculado: true };
+                guardarNubeConfig(cfg);
+                nubeCfgRef.current = cfg;
+                setNubeCfg(cfg);
+                setEstadoNube({ tipo: "conectando", texto: "Conectando con la nube…" });
+                sincronizarDesdeNube(true);
+            }
+
+            function desconectarNube() {
+                const cfg = { url: "", clave: "", vinculado: false };
+                guardarNubeConfig(cfg);
+                nubeCfgRef.current = cfg;
+                setNubeCfg(cfg);
+                setEstadoNube({ tipo: "off", texto: "Nube no configurada en este dispositivo" });
+                mostrarToast("Este dispositivo dejó de usar la nube");
+            }
+
+            // Autoguardado: cada cambio se guarda al instante en el navegador
+            // (respaldo) y, si la nube está configurada, se sube unos segundos
+            // después del último cambio.
             useEffect(() => {
-                const ok = guardarDatos({ empresa, empleados, liqPorEmpleado, escalaGeneral, periodoGeneral, webhookUrl });
-                setEstadoGuardado({
-                    ok,
-                    hora: new Date().toLocaleTimeString('es-AR', { hour: '2-digit', minute: '2-digit', second: '2-digit' })
-                });
+                const datos = { empresa, empleados, liqPorEmpleado, escalaGeneral, periodoGeneral, webhookUrl };
+                datosRef.current = datos;
+                const ok = guardarDatos(datos);
+                setEstadoGuardado({ ok, hora: horaAhora() });
+                if (primeraVez.current) { primeraVez.current = false; return; }
+                if (aplicandoRemoto.current) { aplicandoRemoto.current = false; return; }
+                guardarMeta({ updatedAt: Date.now(), pendiente: true });
+                if (nubeActiva(nubeCfgRef.current)) programarSubida();
             }, [empresa, empleados, liqPorEmpleado, escalaGeneral, periodoGeneral, webhookUrl]);
+
+            // Al abrir la app, al volver a la pestaña y al recuperar conexión:
+            // se trae lo último de la nube. Al cerrar, se sube lo pendiente.
+            useEffect(() => {
+                sincronizarDesdeNube(false);
+                const alVolver = () => {
+                    if (document.visibilityState === "hidden") return;
+                    if (Date.now() - ultimaSync.current < 10000) return;
+                    if (leerMeta().pendiente) subirAhora(); else sincronizarDesdeNube(false);
+                };
+                const alSalir = () => { if (leerMeta().pendiente) subirAhora(true); };
+                window.addEventListener("focus", alVolver);
+                window.addEventListener("online", alVolver);
+                document.addEventListener("visibilitychange", alVolver);
+                window.addEventListener("pagehide", alSalir);
+                return () => {
+                    window.removeEventListener("focus", alVolver);
+                    window.removeEventListener("online", alVolver);
+                    document.removeEventListener("visibilitychange", alVolver);
+                    window.removeEventListener("pagehide", alSalir);
+                };
+            }, []);
 
             const emp = empleados.find(e => e.id === selectedId) || null;
             const liq = emp ? (liqPorEmpleado[emp.id] || defaultLiq()) : defaultLiq();
@@ -3934,15 +4616,29 @@
                 <div className="app">
                     <TopBar empresa={empresa} setEmpresa={setEmpresa} />
                     <div className="layout">
-                        <Sidebar empleados={empleados} selectedId={selectedId} vista={vista}
-                            onSelect={(id) => { setSelectedId(id); setTab("datos"); setVista("empleado"); }}
-                            onNuevo={nuevoEmpleado} onDelete={borrarEmpleado}
-                            onVerEscala={() => setVista("escala")}
-                            onVerWebhook={() => setVista("webhook")} />
+                        <div className="mobile-nav">
+                            <button className="btn btn-primary btn-sm" onClick={() => setMenuMovil(!menuMovil)}>
+                                {menuMovil ? "✕ Cerrar" : `☰ Empleados (${empleados.length})`}
+                            </button>
+                            <span className="actual">
+                                {vista === "escala" ? "Escala salarial y período" : vista === "webhook" ? "Webhook" : vista === "nube" ? "Guardado en la nube" : (emp ? (emp.nombre || "(sin nombre)") : "Elegí un empleado")}
+                            </span>
+                        </div>
+                        <Sidebar empleados={empleados} selectedId={selectedId} vista={vista} abierto={menuMovil}
+                            onSelect={(id) => { setSelectedId(id); setTab("datos"); setVista("empleado"); setMenuMovil(false); }}
+                            onNuevo={() => { nuevoEmpleado(); setMenuMovil(false); }} onDelete={borrarEmpleado}
+                            onVerEscala={() => { setVista("escala"); setMenuMovil(false); }}
+                            onVerWebhook={() => { setVista("webhook"); setMenuMovil(false); }}
+                            onVerNube={() => { setVista("nube"); setMenuMovil(false); }} />
                         <div className="main">
                             {vista === "escala" && (
                                 <EscalaGeneralView escalaGeneral={escalaGeneral} updateEscalaGeneral={updateEscalaGeneral}
                                     periodoGeneral={periodoGeneral} updatePeriodoGeneral={updatePeriodoGeneral} />
+                            )}
+                            {vista === "nube" && (
+                                <NubeView nubeCfg={nubeCfg} estadoNube={estadoNube}
+                                    onGuardar={guardarConfigNube} onDesconectar={desconectarNube}
+                                    onSincronizar={() => sincronizarDesdeNube(true)} />
                             )}
                             {vista === "webhook" && (
                                 <WebhookView webhookUrl={webhookUrl} setWebhookUrl={setWebhookUrl}
@@ -3976,10 +4672,18 @@
                         </div>
                     </div>
                     <div className="footer-note">
-                        {estadoGuardado.ok ? (
+                        {estadoNube.tipo !== "off" ? (
+                            <span className={"estado-guardado" + (estadoNube.tipo === "error" || estadoNube.tipo === "offline" || estadoNube.tipo === "vacia" ? " error" : "")}
+                                style={{ cursor: "pointer" }} onClick={() => setVista("nube")}>
+                                <span className="punto"></span>
+                                ☁ {estadoNube.texto}
+                            </span>
+                        ) : estadoGuardado.ok ? (
                             <span className="estado-guardado">
                                 <span className="punto"></span>
-                                Guardado automático{estadoGuardado.hora ? ` · ${estadoGuardado.hora}` : ""}
+                                Guardado en este navegador{estadoGuardado.hora ? ` · ${estadoGuardado.hora}` : ""}
+                                <button className="btn btn-ghost btn-sm" style={{ marginLeft: 8, padding: "3px 8px" }}
+                                    onClick={() => setVista("nube")}>☁ Configurar nube</button>
                             </span>
                         ) : (
                             <span className="estado-guardado error">
@@ -3987,7 +4691,6 @@
                                 No se pudo guardar en este navegador (¿modo incógnito o almacenamiento bloqueado?)
                             </span>
                         )}
-                        {" "}— Cada cambio se guarda solo en este navegador.
                         <div style={{ marginTop: 8, display: "flex", gap: 10, justifyContent: "center", flexWrap: "wrap" }}>
                             <button className="btn btn-primary btn-sm" onClick={onGenerarTodosPDF}>⬇ Descargar todos los recibos (PDF)</button>
                             <button className="btn btn-ghost btn-sm" onClick={onGenerarInformativoPDF}>📄 Recibos Informativos</button>
