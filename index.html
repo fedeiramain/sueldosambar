@@ -1780,14 +1780,14 @@
             const brutoParaPresentismo = basico + antigMonto + he50 + he100 + otrosRemun - inasistenciasMonto;
             const presentismoMonto = liq.presentismo ? brutoParaPresentismo * 0.0833 : 0;
 
-            // Plus vacacional: la base es todo lo que genera aportes. La parte
-            // remunerativa (básico, antigüedad, presentismo, horas extra, otras
-            // remuneraciones, menos inasistencias) da un plus remunerativo; la
-            // parte no remunerativa (asignación + su antigüedad y presentismo)
-            // da un plus no remunerativo, más abajo. La Suma Fija no entra
-            // porque no genera aportes. Como la base ya incluye el presentismo,
-            // el plus no vuelve a generar presentismo.
-            const basePlusVacacional = brutoParaPresentismo + presentismoMonto;
+            // Plus vacacional: un solo concepto, remunerativo. Su base es todo lo
+            // que genera aportes: el remunerativo del mes (básico, antigüedad,
+            // presentismo, horas extra, otras remuneraciones, menos
+            // inasistencias) más la asignación no remunerativa con su
+            // antigüedad y presentismo. La Suma Fija no entra. Como la base ya
+            // incluye el presentismo, el plus no vuelve a generar presentismo.
+            const basePlusVacNoRemun = (noRemunerativoBase + noRemunerativoBase * antigPct / 100) * (liq.presentismo ? 1.0833 : 1);
+            const basePlusVacacional = brutoParaPresentismo + presentismoMonto + basePlusVacNoRemun;
             const plusVacacional = Math.max(0, basePlusVacacional) * factorPlusVac;
             const valorDiaVacaciones = basePlusVacacional / 25;
 
@@ -1803,12 +1803,8 @@
             const brutoNoRemunParaPresentismo = noRemunerativoBase + antigNoRemunMonto;
             const presentismoNoRemunMonto = liq.presentismo ? brutoNoRemunParaPresentismo * 0.0833 : 0;
 
-            // Plus vacacional sobre la parte no remunerativa: sigue siendo no
-            // remunerativo (genera obra social y sindical, no jubilación).
-            const basePlusVacNoRemun = brutoNoRemunParaPresentismo + presentismoNoRemunMonto;
-            const plusVacacionalNoRem = basePlusVacNoRemun * factorPlusVac;
-
-            const noRemunerativo = basePlusVacNoRemun + plusVacacionalNoRem;
+            const plusVacacionalNoRem = 0; // el plus vacacional va todo en un solo concepto remunerativo
+            const noRemunerativo = brutoNoRemunParaPresentismo + presentismoNoRemunMonto;
 
             // Base imponible para la obra social
 
@@ -1969,7 +1965,6 @@
                 inasistencias_monto: n(calc.inasistenciasMonto),
                 plus_vacacional_dias: n(calc.diasVacaciones),
                 plus_vacacional_monto: n(calc.plusVacacional),
-                plus_vacacional_no_remunerativo: n(calc.plusVacacionalNoRem),
                 otras_remuneraciones_concepto: liq.otrosRemunerativosConcepto || "",
                 otras_remuneraciones_monto: n(calc.otrosRemun),
                 no_remunerativo_concepto: liq.noRemunerativosConcepto || "",
@@ -2262,7 +2257,6 @@
                 ["Horas extra al 100%", calc.he100 || 0, 0, 0, (parseFloat(liq.horasExtra100) || 0) > 0 ? `${liq.horasExtra100}` : ""],
                 ["Inasistencias", -(calc.inasistenciasMonto || 0), 0, 0, calc.horasInasistencia > 0 ? `${calc.horasInasistencia}` : ""],
                 ["Plus vacacional", calc.plusVacacional, 0, 0, calc.diasVacaciones > 0 ? `${calc.diasVacaciones}` : ""],
-                ["Plus vacacional s/no remunerativo", 0, calc.plusVacacionalNoRem, 0, calc.plusVacacionalNoRem > 0 ? `${calc.diasVacaciones}` : ""],
                 [liq.otrosRemunerativosConcepto || "Otras remuneraciones", calc.otrosRemun, 0, 0, ""],
                 [liq.noRemunerativosConcepto || "Asignación no remunerativa", 0, calc.noRemunerativoBase, 0, ""],
                 ["Antigüedad s/no remunerativo", 0, calc.antigNoRemunMonto, 0, ""],
@@ -3149,7 +3143,7 @@
                             empresa_razonSocial, empresa_cuit, empleado_nombre, empleado_cuil, empleado_legajo,
                             categoria, jornada, fecha_ingreso, periodo, fecha_pago, basico, antiguedad_pct,
                             antiguedad_monto, presentismo_monto, horas_extra_50, horas_extra_100,
-                            horas_inasistencia, inasistencias_monto, plus_vacacional_dias, plus_vacacional_monto, plus_vacacional_no_remunerativo,
+                            horas_inasistencia, inasistencias_monto, plus_vacacional_dias, plus_vacacional_monto,
                             otras_remuneraciones_concepto, otras_remuneraciones_monto, no_remunerativo_concepto,
                             no_remunerativo_base, no_remunerativo_antiguedad, no_remunerativo_presentismo,
                             no_remunerativo_total, suma_fija_concepto, suma_fija_monto, jubilacion, ley_19032, obra_social, cuota_sindical,
@@ -3411,7 +3405,6 @@
                                 <tr><td className="label">Asignación no remunerativa</td><td className="amount">$ {fmt(calc.noRemunerativoBase)}</td></tr>
                                 <tr><td className="label">Antigüedad s/no remunerativo</td><td className="amount">$ {fmt(calc.antigNoRemunMonto)}</td></tr>
                                 <tr><td className="label">Presentismo s/no remunerativo</td><td className="amount">$ {fmt(calc.presentismoNoRemunMonto)}</td></tr>
-                                <tr><td className="label">Plus vacacional s/no remunerativo</td><td className="amount">$ {fmt(calc.plusVacacionalNoRem)}</td></tr>
                                 <tr><td className="label">{calc.sumaFijaConcepto} (sin aportes)</td><td className="amount">$ {fmt(calc.sumaFija)}</td></tr>
                                 <tr className="total"><td>Total bruto</td><td className="amount">$ {fmt(calc.totalBruto)}</td></tr>
 
@@ -3581,7 +3574,6 @@
                                 {calc.otrosRemun > 0 && <tr><td>{liq.otrosRemunerativosConcepto || "Otras remuneraciones"}</td><td className="num">$ {fmt(calc.otrosRemun)}</td><td className="num"></td><td className="num"></td></tr>}
                                 {calc.noRemunerativoBase > 0 && <tr><td>{liq.noRemunerativosConcepto || "Asig. no remunerativa"}</td><td className="num"></td><td className="num">$ {fmt(calc.noRemunerativoBase)}</td><td className="num"></td></tr>}
                                 {calc.antigNoRemunMonto > 0 && <tr><td>Antigüedad s/no remunerativo</td><td className="num"></td><td className="num">$ {fmt(calc.antigNoRemunMonto)}</td><td className="num"></td></tr>}
-                                {calc.plusVacacionalNoRem > 0 && <tr><td>Plus vacacional s/no remunerativo ({calc.diasVacaciones} día/s)</td><td className="num"></td><td className="num">$ {fmt(calc.plusVacacionalNoRem)}</td><td className="num"></td></tr>}
                                 {calc.presentismoNoRemunMonto > 0 && <tr><td>Presentismo s/no remunerativo</td><td className="num"></td><td className="num">$ {fmt(calc.presentismoNoRemunMonto)}</td><td className="num"></td></tr>}
                                 {calc.sumaFija > 0 && <tr><td>{calc.sumaFijaConcepto}</td><td className="num"></td><td className="num">$ {fmt(calc.sumaFija)}</td><td className="num"></td></tr>}
                                 <tr><td>Jubilación 11%</td><td className="num"></td><td className="num"></td><td className="num">$ {fmt(calc.jubilacion)}</td></tr>
